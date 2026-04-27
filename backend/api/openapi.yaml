@@ -1,0 +1,1611 @@
+# ============================================================================
+# Chaos-Sec: OpenAPI 3.0 Specification
+# Security Control Validation Platform - Core API
+# ============================================================================
+
+openapi: "3.0.3"
+
+info:
+  title: Chaos-Sec API
+  version: 1.0.0
+  description: |
+    Chaos-Sec is an orchestration platform for security control validation.
+    It automates the execution of chaos engineering experiments against
+    Kubernetes clusters to validate that security controls (detection,
+    alerting, and response) are functioning as expected.
+
+    ## Authentication
+    All endpoints except `/auth/login` and `/health` require a valid JWT
+    bearer token in the `Authorization` header.
+
+    ## Rate Limiting
+    API requests are rate-limited to 100 requests per minute per user.
+    Rate limit headers are included in responses:
+    - `X-RateLimit-Limit` — maximum requests per window
+    - `X-RateLimit-Remaining` — remaining requests in current window
+    - `X-RateLimit-Reset` — seconds until the window resets
+  contact:
+    name: Chaos-Sec Team
+    url: https://github.com/chaos-sec
+    email: dev@chaos-sec.io
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development
+  - url: http://backend:8080/api/v1
+    description: Docker Compose internal
+
+tags:
+  - name: Auth
+    description: Authentication and token management
+  - name: Experiments
+    description: Chaos experiment lifecycle management
+  - name: Templates
+    description: Experiment template library
+  - name: Clusters
+    description: Kubernetes cluster management
+  - name: Dashboard
+    description: Dashboard and summary data
+  - name: Health
+    description: Service health and readiness
+
+# ============================================================================
+# Paths
+# ============================================================================
+paths:
+  # ---------------------------------------------------------------------------
+  # Auth
+  # ---------------------------------------------------------------------------
+  /auth/login:
+    post:
+      operationId: authLogin
+      tags: [Auth]
+      summary: Authenticate user and obtain JWT tokens
+      description: |
+        Authenticates a user with email and password, returning access and
+        refresh JWT tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            examples:
+              valid:
+                summary: Valid login
+                value:
+                  email: admin@chaos-sec.io
+                  password: "secureP@ssw0rd!"
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: unauthorized
+                code: 401
+                details: Invalid email or password
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/refresh:
+    post:
+      operationId: authRefresh
+      tags: [Auth]
+      summary: Refresh an expired access token
+      description: |
+        Exchanges a valid refresh token for a new access/refresh token pair.
+        The old refresh token is invalidated.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  description: A valid refresh token
+              additionalProperties: false
+      responses:
+        "200":
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/me:
+    get:
+      operationId: authMe
+      tags: [Auth]
+      summary: Get the currently authenticated user
+      description: Returns the profile of the user associated with the current JWT.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ---------------------------------------------------------------------------
+  # Experiments
+  # ---------------------------------------------------------------------------
+  /experiments:
+    get:
+      operationId: listExperiments
+      tags: [Experiments]
+      summary: List all experiments
+      description: |
+        Returns a paginated list of chaos experiments. Results can be filtered
+        by status, type, and cluster.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by experiment status
+          schema:
+            type: string
+            enum: [pending, running, completed, failed, cancelled]
+        - name: type
+          in: query
+          description: Filter by experiment type
+          schema:
+            type: string
+            enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+        - name: cluster_id
+          in: query
+          description: Filter by target cluster ID
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          description: Page number (1-indexed)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: per_page
+          in: query
+          description: Items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: sort
+          in: query
+          description: Sort field and direction
+          schema:
+            type: string
+            enum: [created_at_desc, created_at_asc, updated_at_desc, name_asc]
+            default: created_at_desc
+      responses:
+        "200":
+          description: Paginated list of experiments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedExperimentResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    post:
+      operationId: createExperiment
+      tags: [Experiments]
+      summary: Create a new experiment
+      description: |
+        Creates a new chaos experiment from a template or custom configuration.
+        The experiment starts in `pending` state and must be explicitly started.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentCreate"
+      responses:
+        "201":
+          description: Experiment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /experiments/{experiment_id}:
+    get:
+      operationId: getExperiment
+      tags: [Experiments]
+      summary: Get experiment details
+      description: Returns the full details and current state of an experiment.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      responses:
+        "200":
+          description: Experiment details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+        "404":
+          description: Experiment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    put:
+      operationId: updateExperiment
+      tags: [Experiments]
+      summary: Update an experiment
+      description: |
+        Updates mutable fields of an experiment. Only experiments in `pending`
+        or `cancelled` states can be modified.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentUpdate"
+      responses:
+        "200":
+          description: Experiment updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Cannot modify experiment in current state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: deleteExperiment
+      tags: [Experiments]
+      summary: Delete an experiment
+      description: |
+        Deletes an experiment. Running experiments must be cancelled first.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      responses:
+        "204":
+          description: Experiment deleted
+        "404":
+          description: Experiment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Cannot delete a running experiment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /experiments/{experiment_id}/start:
+    post:
+      operationId: startExperiment
+      tags: [Experiments]
+      summary: Start an experiment
+      description: |
+        Transitions a `pending` experiment to `running`. The chaos engine
+        will begin executing the experiment against the target cluster.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      responses:
+        "200":
+          description: Experiment started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+        "409":
+          description: Experiment cannot be started (wrong state)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /experiments/{experiment_id}/cancel:
+    post:
+      operationId: cancelExperiment
+      tags: [Experiments]
+      summary: Cancel a running experiment
+      description: |
+        Requests cancellation of a running experiment. The system will attempt
+        to roll back any injected faults gracefully.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      responses:
+        "200":
+          description: Experiment cancellation requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+        "409":
+          description: Experiment is not running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /experiments/{experiment_id}/results:
+    get:
+      operationId: getExperimentResults
+      tags: [Experiments]
+      summary: Get experiment results
+      description: |
+        Returns the results and findings of a completed experiment, including
+        which security controls were validated and any detected anomalies.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      responses:
+        "200":
+          description: Experiment results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  experiment_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                  started_at:
+                    type: string
+                    format: date-time
+                  completed_at:
+                    type: string
+                    format: date-time
+                  duration_seconds:
+                    type: integer
+                  controls_validated:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        control_name:
+                          type: string
+                        passed:
+                          type: boolean
+                        detection_time_ms:
+                          type: integer
+                          nullable: true
+                        alert_generated:
+                          type: boolean
+                        details:
+                          type: string
+                  summary:
+                    type: object
+                    properties:
+                      total_controls:
+                        type: integer
+                      passed:
+                        type: integer
+                      failed:
+                        type: integer
+                      skipped:
+                        type: integer
+                  siem_alerts_matched:
+                    type: integer
+                  raw_events:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "404":
+          description: Experiment not found or results not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ---------------------------------------------------------------------------
+  # Templates
+  # ---------------------------------------------------------------------------
+  /templates:
+    get:
+      operationId: listTemplates
+      tags: [Templates]
+      summary: List experiment templates
+      description: |
+        Returns available experiment templates. Templates are pre-configured
+        experiment definitions that can be used as a starting point.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: category
+          in: query
+          description: Filter by template category
+          schema:
+            type: string
+            enum: [infrastructure, network, application, security, custom]
+        - name: search
+          in: query
+          description: Search templates by name or description
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Template"
+
+    post:
+      operationId: createTemplate
+      tags: [Templates]
+      summary: Create a custom experiment template
+      description: |
+        Creates a reusable experiment template with predefined parameters.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplateCreate"
+      responses:
+        "201":
+          description: Template created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /templates/{template_id}:
+    get:
+      operationId: getTemplate
+      tags: [Templates]
+      summary: Get template details
+      description: Returns the full template definition including parameters and defaults.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: template_id
+          in: path
+          required: true
+          description: Template ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Template details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "404":
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: deleteTemplate
+      tags: [Templates]
+      summary: Delete a custom template
+      description: |
+        Deletes a template. Built-in templates cannot be deleted.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: template_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Template deleted
+        "403":
+          description: Cannot delete built-in template
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ---------------------------------------------------------------------------
+  # Clusters
+  # ---------------------------------------------------------------------------
+  /clusters:
+    get:
+      operationId: listClusters
+      tags: [Clusters]
+      summary: List registered Kubernetes clusters
+      description: |
+        Returns all clusters registered with Chaos-Sec, including their
+        connection status and health.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of clusters
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Cluster"
+
+    post:
+      operationId: registerCluster
+      tags: [Clusters]
+      summary: Register a new Kubernetes cluster
+      description: |
+        Registers a Kubernetes cluster by providing connection details.
+        The system will verify connectivity before completing registration.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterRegister"
+      responses:
+        "201":
+          description: Cluster registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cluster"
+        "400":
+          description: Validation error or unreachable cluster
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /clusters/{cluster_id}:
+    get:
+      operationId: getCluster
+      tags: [Clusters]
+      summary: Get cluster details
+      description: |
+        Returns cluster details including health, node count, and resource usage.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          description: Cluster ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Cluster details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cluster"
+        "404":
+          description: Cluster not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: removeCluster
+      tags: [Clusters]
+      summary: Remove a registered cluster
+      description: |
+        Removes a cluster registration. Running experiments targeting this
+        cluster will be cancelled.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Cluster removed
+        "404":
+          description: Cluster not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /clusters/{cluster_id}/health:
+    get:
+      operationId: getClusterHealth
+      tags: [Clusters]
+      summary: Check cluster health
+      description: |
+        Performs a live health check against the registered cluster and
+        returns connectivity, node status, and resource information.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Cluster health report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cluster_id:
+                    type: string
+                    format: uuid
+                  connected:
+                    type: boolean
+                  nodes:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      ready:
+                        type: integer
+                      not_ready:
+                        type: integer
+                  version:
+                    type: string
+                  last_checked:
+                    type: string
+                    format: date-time
+
+  # ---------------------------------------------------------------------------
+  # Dashboard
+  # ---------------------------------------------------------------------------
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [Dashboard]
+      summary: Get dashboard summary data
+      description: |
+        Returns aggregated statistics for the main dashboard, including
+        experiment counts, pass/fail rates, and recent activity.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          description: Time period for summary data
+          schema:
+            type: string
+            enum: [24h, 7d, 30d, 90d]
+            default: 7d
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  experiments:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                        description: Total experiments in period
+                      by_status:
+                        type: object
+                        additionalProperties:
+                          type: integer
+                      by_type:
+                        type: object
+                        additionalProperties:
+                          type: integer
+                  controls:
+                    type: object
+                    properties:
+                      total_validated:
+                        type: integer
+                      passed:
+                        type: integer
+                      failed:
+                        type: integer
+                      pass_rate:
+                        type: number
+                        format: float
+                        description: Pass rate as a decimal (0.0 - 1.0)
+                  clusters:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      healthy:
+                        type: integer
+                  recent_experiments:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Experiment"
+                  siem_integration:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      alerts_matched:
+                        type: integer
+                      last_alert_time:
+                        type: string
+                        format: date-time
+                        nullable: true
+                  period:
+                    type: string
+                  generated_at:
+                    type: string
+                    format: date-time
+
+  # ---------------------------------------------------------------------------
+  # Health
+  # ---------------------------------------------------------------------------
+  /health:
+    get:
+      operationId: healthCheck
+      tags: [Health]
+      summary: Service health check
+      description: |
+        Returns the health status of the API service and its dependencies.
+        This endpoint does not require authentication.
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, timestamp, version]
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy]
+                  timestamp:
+                    type: string
+                    format: date-time
+                  version:
+                    type: string
+                  uptime_seconds:
+                    type: integer
+                  dependencies:
+                    type: object
+                    properties:
+                      postgres:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                            enum: [healthy, unhealthy]
+                          latency_ms:
+                            type: integer
+                      redis:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                            enum: [healthy, unhealthy]
+                          latency_ms:
+                            type: integer
+                      rabbitmq:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                            enum: [healthy, unhealthy]
+                      siem:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                            enum: [healthy, unhealthy, disabled]
+                          provider:
+                            type: string
+        "503":
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+# ============================================================================
+# Components
+# ============================================================================
+components:
+
+  # ---------------------------------------------------------------------------
+  # Security Schemes
+  # ---------------------------------------------------------------------------
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token obtained from `/auth/login`.
+        Format: `Authorization: Bearer <token>`
+
+  # ---------------------------------------------------------------------------
+  # Reusable Parameters
+  # ---------------------------------------------------------------------------
+  parameters:
+    ExperimentId:
+      name: experiment_id
+      in: path
+      required: true
+      description: Unique experiment identifier
+      schema:
+        type: string
+        format: uuid
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # User
+    # -------------------------------------------------------------------------
+    User:
+      type: object
+      required: [id, email, role, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique user identifier
+          readOnly: true
+        email:
+          type: string
+          format: email
+          description: User email address
+          example: admin@chaos-sec.io
+        name:
+          type: string
+          description: Display name
+          example: Jash Sharma
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+          description: User role determining permissions
+          example: admin
+        avatar_url:
+          type: string
+          format: uri
+          description: URL to user avatar image
+          nullable: true
+        last_login:
+          type: string
+          format: date-time
+          description: Timestamp of last successful login
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          description: Last profile update timestamp
+          readOnly: true
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # LoginRequest
+    # -------------------------------------------------------------------------
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Registered email address
+          example: admin@chaos-sec.io
+        password:
+          type: string
+          format: password
+          description: Account password
+          minLength: 8
+          maxLength: 128
+      additionalProperties: false
+
+    # -------------------------------------------------------------------------
+    # LoginResponse
+    # -------------------------------------------------------------------------
+    LoginResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, user]
+      properties:
+        access_token:
+          type: string
+          description: JWT access token for API authorization
+          example: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: JWT refresh token for obtaining new access tokens
+          example: dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4...
+        token_type:
+          type: string
+          enum: [Bearer]
+          description: Token type
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds
+          example: 3600
+        user:
+          $ref: "#/components/schemas/User"
+
+    # -------------------------------------------------------------------------
+    # Experiment
+    # -------------------------------------------------------------------------
+    Experiment:
+      type: object
+      required: [id, name, type, status, cluster_id, created_by, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique experiment identifier
+          readOnly: true
+        name:
+          type: string
+          description: Human-readable experiment name
+          minLength: 1
+          maxLength: 255
+          example: Pod Kill - Payment Service
+        description:
+          type: string
+          description: Detailed experiment description
+          maxLength: 2000
+          nullable: true
+          example: Validates that alerting triggers when the payment pod is killed
+        type:
+          type: string
+          enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+          description: Experiment type determining the chaos action
+          example: pod_kill
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+          description: Current lifecycle state of the experiment
+          readOnly: true
+          example: pending
+        cluster_id:
+          type: string
+          format: uuid
+          description: ID of the target Kubernetes cluster
+        cluster_name:
+          type: string
+          description: Name of the target cluster (denormalized)
+          readOnly: true
+        template_id:
+          type: string
+          format: uuid
+          description: ID of the template used to create this experiment
+          nullable: true
+        namespace:
+          type: string
+          description: Kubernetes namespace targeted by the experiment
+          example: chaos-sec-experiments
+        target_selector:
+          type: object
+          description: Kubernetes label selector for target resources
+          properties:
+            app:
+              type: string
+              example: payment-service
+            version:
+              type: string
+              example: v2.1.0
+          additionalProperties: true
+        parameters:
+          type: object
+          description: Experiment-type-specific configuration parameters
+          additionalProperties: true
+          example:
+            duration: "60s"
+            force: false
+            grace_period: "5s"
+        schedule:
+          type: object
+          description: Optional scheduling configuration
+          nullable: true
+          properties:
+            cron:
+              type: string
+              description: Cron expression for recurring execution
+              example: "0 */6 * * *"
+            next_run:
+              type: string
+              format: date-time
+              nullable: true
+        tags:
+          type: array
+          description: User-defined tags for categorization
+          items:
+            type: string
+          example: [payment, critical, sre]
+        controls:
+          type: array
+          description: Security controls to validate during the experiment
+          items:
+            type: object
+            required: [name, type]
+            properties:
+              name:
+                type: string
+                example: SIEM Alert Generation
+              type:
+                type: string
+                enum: [detection, alerting, response, logging]
+              expected:
+                type: string
+                description: Expected behaviour description
+                example: Alert generated within 60 seconds
+              timeout_seconds:
+                type: integer
+                default: 300
+        timeout_seconds:
+          type: integer
+          description: Maximum duration before auto-cancellation
+          default: 600
+          example: 300
+        created_by:
+          type: string
+          format: uuid
+          description: ID of the user who created the experiment
+          readOnly: true
+        started_at:
+          type: string
+          format: date-time
+          description: Timestamp when the experiment started running
+          readOnly: true
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          description: Timestamp when the experiment finished
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    # -------------------------------------------------------------------------
+    # ExperimentCreate
+    # -------------------------------------------------------------------------
+    ExperimentCreate:
+      type: object
+      required: [name, type, cluster_id]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 2000
+        type:
+          type: string
+          enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+        cluster_id:
+          type: string
+          format: uuid
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+        namespace:
+          type: string
+          default: chaos-sec-experiments
+        target_selector:
+          type: object
+          additionalProperties: true
+        parameters:
+          type: object
+          additionalProperties: true
+        schedule:
+          type: object
+          nullable: true
+          properties:
+            cron:
+              type: string
+        tags:
+          type: array
+          items:
+            type: string
+        controls:
+          type: array
+          items:
+            type: object
+            required: [name, type]
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+                enum: [detection, alerting, response, logging]
+              expected:
+                type: string
+              timeout_seconds:
+                type: integer
+        timeout_seconds:
+          type: integer
+          default: 600
+      additionalProperties: false
+
+    # -------------------------------------------------------------------------
+    # ExperimentUpdate
+    # -------------------------------------------------------------------------
+    ExperimentUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 2000
+        namespace:
+          type: string
+        target_selector:
+          type: object
+          additionalProperties: true
+        parameters:
+          type: object
+          additionalProperties: true
+        tags:
+          type: array
+          items:
+            type: string
+        controls:
+          type: array
+          items:
+            type: object
+            required: [name, type]
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+                enum: [detection, alerting, response, logging]
+              expected:
+                type: string
+              timeout_seconds:
+                type: integer
+        timeout_seconds:
+          type: integer
+      additionalProperties: false
+
+    # -------------------------------------------------------------------------
+    # Template
+    # -------------------------------------------------------------------------
+    Template:
+      type: object
+      required: [id, name, type, category, builtin, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          description: Template display name
+          example: Pod Kill Validation
+        description:
+          type: string
+          description: Template description and use case
+          example: |
+            Validates that killing a pod triggers the expected detection,
+            alerting, and recovery controls.
+        type:
+          type: string
+          enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+          description: Experiment type this template creates
+        category:
+          type: string
+          enum: [infrastructure, network, application, security, custom]
+          description: Template category for organization
+          example: infrastructure
+        builtin:
+          type: boolean
+          description: Whether this is a system-provided template
+          readOnly: true
+          example: true
+        default_parameters:
+          type: object
+          description: Default parameters for experiments created from this template
+          additionalProperties: true
+          example:
+            duration: "60s"
+            force: false
+            grace_period: "5s"
+        default_controls:
+          type: array
+          description: Default security controls to validate
+          items:
+            type: object
+            required: [name, type]
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+                enum: [detection, alerting, response, logging]
+              expected:
+                type: string
+              timeout_seconds:
+                type: integer
+        required_selectors:
+          type: array
+          description: Label selectors that must be specified when using this template
+          items:
+            type: string
+          example: [app]
+        tags:
+          type: array
+          items:
+            type: string
+          example: [pod, kill, resilience]
+        usage_count:
+          type: integer
+          description: Number of experiments created from this template
+          readOnly: true
+        created_by:
+          type: string
+          format: uuid
+          description: User who created the template (null for built-in)
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # TemplateCreate
+    # -------------------------------------------------------------------------
+    TemplateCreate:
+      type: object
+      required: [name, type, category]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 2000
+        type:
+          type: string
+          enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+        category:
+          type: string
+          enum: [infrastructure, network, application, security, custom]
+        default_parameters:
+          type: object
+          additionalProperties: true
+        default_controls:
+          type: array
+          items:
+            type: object
+            required: [name, type]
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+                enum: [detection, alerting, response, logging]
+              expected:
+                type: string
+              timeout_seconds:
+                type: integer
+        required_selectors:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+
+    # -------------------------------------------------------------------------
+    # Cluster
+    # -------------------------------------------------------------------------
+    Cluster:
+      type: object
+      required: [id, name, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          description: Human-readable cluster name
+          example: production-us-east
+        description:
+          type: string
+          description: Cluster description
+          nullable: true
+          example: Production cluster in US-East-1
+        status:
+          type: string
+          enum: [connected, disconnected, error]
+          description: Current connection status
+          readOnly: true
+          example: connected
+        context:
+          type: string
+          description: Kubernetes context name
+          example: kind-chaos-sec
+        namespace:
+          type: string
+          description: Default namespace for chaos experiments
+          example: chaos-sec-experiments
+        node_count:
+          type: integer
+          description: Number of nodes in the cluster
+          readOnly: true
+          example: 3
+        version:
+          type: string
+          description: Kubernetes server version
+          readOnly: true
+          example: v1.28.0
+        labels:
+          type: object
+          description: User-defined labels for the cluster
+          additionalProperties:
+            type: string
+          example:
+            environment: production
+            region: us-east-1
+        last_health_check:
+          type: string
+          format: date-time
+          description: Timestamp of last successful health check
+          readOnly: true
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # ClusterRegister
+    # -------------------------------------------------------------------------
+    ClusterRegister:
+      type: object
+      required: [name, kubeconfig]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Cluster display name
+        description:
+          type: string
+          maxLength: 1000
+        kubeconfig:
+          type: string
+          description: |
+            Base64-encoded kubeconfig file content for cluster access.
+            The kubeconfig should contain a valid context with credentials.
+          format: byte
+        context:
+          type: string
+          description: |
+            Kubernetes context name to use from the kubeconfig.
+            If omitted, the current context is used.
+        namespace:
+          type: string
+          default: chaos-sec-experiments
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: false
+
+    # -------------------------------------------------------------------------
+    # Error
+    # -------------------------------------------------------------------------
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+          example: validation_error
+        code:
+          type: integer
+          description: HTTP status code
+          example: 400
+        details:
+          type: string
+          description: Human-readable error message
+          nullable: true
+          example: Field 'name' is required
+        field:
+          type: string
+          description: Name of the invalid field (for validation errors)
+          nullable: true
+          example: name
+        request_id:
+          type: string
+          description: Correlation ID for tracing
+          nullable: true
+          example: req_abc123def456
+
+    # -------------------------------------------------------------------------
+    # PaginatedResponse (generic wrapper)
+    # -------------------------------------------------------------------------
+    PaginatedExperimentResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Experiment"
+        pagination:
+          type: object
+          required: [page, per_page, total, total_pages]
+          properties:
+            page:
+              type: integer
+              description: Current page number (1-indexed)
+              example: 1
+            per_page:
+              type: integer
+              description: Number of items per page
+              example: 20
+            total:
+              type: integer
+              description: Total number of items across all pages
+              example: 57
+            total_pages:
+              type: integer
+              description: Total number of pages
+              example: 3
+            has_next:
+              type: boolean
+              description: Whether a next page exists
+              example: true
+            has_prev:
+              type: boolean
+              description: Whether a previous page exists
+              example: false

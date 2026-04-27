@@ -1,0 +1,55 @@
+# =============================================================================
+# Chaos-Sec Backend Service
+# =============================================================================
+# ClusterIP service exposing the Chaos-Sec backend API server.
+# - Port 8080: HTTP API (includes /api/v1, /ws, /health)
+# - Port 9090: Prometheus metrics endpoint
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: chaos-sec-backend
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-backend
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Chaos-Sec Backend API service"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+
+  # ──────────────────────────────────────────────
+  # Selector – matches the backend Deployment pods
+  # ──────────────────────────────────────────────
+  selector:
+    app.kubernetes.io/name: chaos-sec-backend
+    app.kubernetes.io/component: api
+
+  # ──────────────────────────────────────────────
+  # Port Definitions
+  # ──────────────────────────────────────────────
+  ports:
+    # Main HTTP API port – serves REST API, WebSocket, and health endpoints
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+      appProtocol: http
+
+    # Prometheus metrics port
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+      appProtocol: http

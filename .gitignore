@@ -1,0 +1,194 @@
+# ============================================================================
+# Chaos-Sec: An Orchestration Platform for Security Control Validation
+# Comprehensive .gitignore for Go, React, Docker, and IDE files
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Go
+# ----------------------------------------------------------------------------
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+vendor/
+bin/
+dist/
+go.work
+go.work.sum
+
+# Go coverage
+coverage.out
+coverage.html
+coverage.txt
+
+# Go lint
+*.lint
+
+# ----------------------------------------------------------------------------
+# Node.js / React / Frontend
+# ----------------------------------------------------------------------------
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.js
+frontend/coverage/
+frontend/build/
+frontend/dist/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.npm
+frontend/.yarn/integrity
+frontend/.yarn/cache
+frontend/.yarn/unplugged
+
+# ----------------------------------------------------------------------------
+# Docker
+# ----------------------------------------------------------------------------
+docker-compose.override.yml
+.docker/
+*.dockerenv
+
+# ----------------------------------------------------------------------------
+# Kubernetes
+# ----------------------------------------------------------------------------
+kubeconfig
+*.kubeconfig
+*.kubeconfig.yml
+.kube/
+
+# ----------------------------------------------------------------------------
+# IDE / Editor
+# ----------------------------------------------------------------------------
+# VS Code
+.vscode/
+*.code-workspace
+.history/
+
+# JetBrains (GoLand, WebStorm, IntelliJ)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+.sts4cache/
+
+# ----------------------------------------------------------------------------
+# Operating System
+# ----------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.fuse_hidden*
+.nfs*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ----------------------------------------------------------------------------
+# Environment & Secrets
+# ----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+secrets/
+.secrets
+
+# ----------------------------------------------------------------------------
+# Database
+# ----------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.sql.bak
+pgdata/
+
+# ----------------------------------------------------------------------------
+# Logs
+# ----------------------------------------------------------------------------
+*.log
+logs/
+*.log.*
+
+# ----------------------------------------------------------------------------
+# Build Artifacts
+# ----------------------------------------------------------------------------
+build/
+output/
+release/
+tmp/
+
+# ----------------------------------------------------------------------------
+# Testing
+# ----------------------------------------------------------------------------
+test-results/
+playwright-report/
+test-report/
+.nyc_output/
+
+# ----------------------------------------------------------------------------
+# Documentation Build
+# ----------------------------------------------------------------------------
+site/
+_docs/build/
+
+# ----------------------------------------------------------------------------
+# Terraform (if used)
+# ----------------------------------------------------------------------------
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfplan
+terraform/.terraform.tfstate.lock.info
+
+# ----------------------------------------------------------------------------
+# Misc
+# ----------------------------------------------------------------------------
+.cache/
+.node/
+.pnpm-store/
+-e 
+# Frontend build artifacts
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+frontend/package-lock.json
+-e 
+# Go binary
+backend/backend
+backend/chaos-sec-backend

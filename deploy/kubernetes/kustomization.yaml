@@ -1,0 +1,141 @@
+# =============================================================================
+# Chaos-Sec Platform Kustomization
+# =============================================================================
+# Declarative resource ordering for the Chaos-Sec platform.
+# Resources are applied in dependency order:
+#   1. Namespace (must exist first)
+#   2. Configuration (ConfigMaps and Secrets before workloads)
+#   3. Data layer (PostgreSQL and Redis StatefulSets + Services)
+#   4. Application layer (Backend and Frontend Deployments + Services)
+#   5. Networking (Ingress routes traffic to services)
+#   6. Autoscaling (HPA scales workloads based on metrics)
+#
+# Usage:
+#   kubectl apply -k deploy/kubernetes/
+#
+# Or with overlays:
+#   kubectl apply -k deploy/kubernetes/overlays/production/
+#   kubectl apply -k deploy/kubernetes/overlays/staging/
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# ──────────────────────────────────────────────
+# Namespace
+# ──────────────────────────────────────────────
+# Must be created first so all subsequent
+# resources have a target namespace.
+namespace: chaos-sec
+
+# ──────────────────────────────────────────────
+# Common Labels
+# ──────────────────────────────────────────────
+# Applied to all resources that don't already
+# have these labels. Useful for selection and
+# cost allocation.
+commonLabels:
+  app.kubernetes.io/part-of: chaos-sec
+  app.kubernetes.io/managed-by: kustomize
+
+# ──────────────────────────────────────────────
+# Common Annotations
+# ──────────────────────────────────────────────
+commonAnnotations:
+  contact: "dev@chaos-sec.io"
+  docs: "https://docs.chaos-sec.io"
+
+# ──────────────────────────────────────────────
+# Resource Ordering
+# ──────────────────────────────────────────────
+# Listed in dependency order to ensure proper
+# creation sequence during initial deployment.
+resources:
+  # ── Namespace ────────────────────────────────
+  # Foundation: must exist before any other resource
+  - namespace.yaml
+
+  # ── Configuration ────────────────────────────
+  # ConfigMaps and Secrets must exist before
+  # workloads reference them as envFrom or volume
+  - configmap.yaml
+  - secrets.yaml
+
+  # ── Data Layer ──────────────────────────────
+  # Stateful services with persistent storage
+  # (PostgreSQL and Redis must be ready before
+  # the backend can serve requests)
+  - postgres-statefulset.yaml
+  - redis-statefulset.yaml
+
+  # ── Application Layer ───────────────────────
+  # Backend and Frontend Deployments and their
+  # ClusterIP Services
+  - backend-deployment.yaml
+  - backend-service.yaml
+  - frontend-deployment.yaml
+  - frontend-service.yaml
+
+  # ── Networking ──────────────────────────────
+  # Ingress routes external traffic to services
+  - ingress.yaml
+
+  # ── Autoscaling ─────────────────────────────
+  # HPA scales workloads based on metrics
+  - hpa.yaml
+
+# ──────────────────────────────────────────────
+# Image Tags
+# ──────────────────────────────────────────────
+# Centralized image tag management. Override
+# these in overlays for different environments.
+# Usage: set the CONTAINER_IMAGE_TAG environment
+# variable or override in an overlay patch.
+images:
+  - name: chaos-sec/backend
+    newTag: latest
+  - name: chaos-sec/frontend
+    newTag: latest
+
+# ──────────────────────────────────────────────
+# ConfigMap Generator (Optional)
+# ──────────────────────────────────────────────
+# Uncomment to use configMapGenerator instead of
+# static ConfigMap files. This enables automatic
+# rollout triggers when config changes.
+# configMapGenerator:
+#   - name: chaos-sec-config
+#     envs:
+#       - config.env
+#     options:
+#       disableNameSuffixHash: false
+#       labels:
+#         app.kubernetes.io/component: configuration
+
+# ──────────────────────────────────────────────
+# Secret Generator (Optional)
+# ──────────────────────────────────────────────
+# Uncomment to use secretGenerator instead of
+# static Secret files. This is more secure as
+# secrets are not stored in plaintext in Git.
+# secretGenerator:
+#   - name: chaos-sec-secrets
+#     envs:
+#       - secrets.env
+#     type: Opaque
+#     options:
+#       disableNameSuffixHash: false
+#       labels:
+#         app.kubernetes.io/component: secrets
+
+# ──────────────────────────────────────────────
+# Replica Overrides (for overlays)
+# ──────────────────────────────────────────────
+# Base replica counts. Override in overlays for
+# different environments (e.g., staging: 1 replica,
+# production: 3+ replicas).
+# replicas:
+#   - name: chaos-sec-backend
+#     count: 2
+#   - name: chaos-sec-frontend
+#     count: 2

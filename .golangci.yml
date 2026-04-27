@@ -1,0 +1,404 @@
+# ============================================================================
+# Chaos-Sec: golangci-lint Configuration
+# Comprehensive Go linter settings for security control validation platform
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# General settings
+# ----------------------------------------------------------------------------
+run:
+  # Timeout for the entire lint run
+  timeout: 5m
+
+  # Go version to target
+  go: "1.21"
+
+  # List of directories to skip
+  skip-dirs:
+    - vendor
+    - third_party
+    - testdata
+    - dist
+    - bin
+
+  # Skip generated files by directory pattern
+  skip-dirs-use-default: true
+
+  # Files to skip entirely
+  skip-files:
+    - ".*_test\\.go$"
+    - "mock_.*\\.go$"
+
+  # Modules download mode
+  modules-download-mode: readonly
+
+# ----------------------------------------------------------------------------
+# Output configuration
+# ----------------------------------------------------------------------------
+output:
+  # Output format options: colored-line-number, line-number, json, csv, tab
+  formats:
+    - format: colored-line-number
+
+  # Sort results by: file, line, column, path, severity
+  sort-results: true
+
+# ----------------------------------------------------------------------------
+# Linters - Enabled
+# ----------------------------------------------------------------------------
+linters:
+  # Enable specific linters
+  enable:
+    # ── Security ──────────────────────────────────────────────
+    - gosec          # Security issues (SQL injection, hardcoded creds, etc.)
+
+    # ── Bugs & Correctness ────────────────────────────────────
+    - govet          # Reports suspicious constructs (shadowed vars, etc.)
+    - errcheck       # Checks that error returns are used
+    - bodyclose      # Checks HTTP response body is closed
+    - durationcheck  # Checks for two durations multiplied together
+    - exportloopref  # Checks for loop variable capture in goroutines
+    - goerr113       # Checks for error format strings (Go 1.13+)
+    - sqlclosecheck  # Checks sql.Rows/Stmt are closed
+    - prealloc       # Suggests preallocating slices
+
+    # ── Code Quality ──────────────────────────────────────────
+    - staticcheck    # Comprehensive Go vet replacement
+    - gosimple       # Simplifies code
+    - unused         # Finds unused declarations
+    - gocritic       # Opinionated Go source checker
+    - predeclared    # Finds shadowed predeclared identifiers
+    - revive         # Fast, configurable linter (golint replacement)
+    - unconvert      # Removes unnecessary type conversions
+    - unparam        # Finds unused function parameters
+
+    # ── Style & Formatting ────────────────────────────────────
+    - gofmt          # Checks formatting with gofmt
+    - goimports      # Checks import ordering and grouping
+    - misspell       # Finds spelling mistakes
+    - whitespace     # Detects unnecessary whitespace
+
+  # Disable specific linters (from default set)
+  disable:
+    - exhaustivestruct  # Too strict for this project
+    - godot            # Don't require periods on comments
+    - nlreturn          # Too noisy
+    - wsl               # Too opinionated
+    - lll               # Line length handled by formatter
+    - funlen            # Too strict during early dev
+    - gocyclo           # Replaced by cyclop with better defaults
+    - cyclop            # Will configure separately
+
+# ----------------------------------------------------------------------------
+# Linter-specific settings
+# ----------------------------------------------------------------------------
+linters-settings:
+  # ── gosec ──────────────────────────────────────────────────────
+  gosec:
+    # Severity of issues: low, medium, high
+    severity: medium
+    # Confidence of issues: low, medium, high
+    confidence: medium
+    # Exclude generated files
+    excludes:
+      - G101  # Hardcoded credentials (too many false positives in configs)
+      - G404  # Weak random (acceptable for non-crypto in dev)
+    # Global configuration
+    config:
+      global:
+        audit: true
+    # Rule-specific overrides
+    rules:
+      # Allow hardcoded dev credentials in test files
+      G101:
+        confidence: high
+      # SQL injection — always flag
+      G201:
+        severity: high
+        confidence: high
+      # SQL injection with format string — always flag
+      G202:
+        severity: high
+        confidence: high
+      # SQL injection with string concat — always flag
+      G203:
+        severity: high
+        confidence: high
+      # Command execution — flag for review
+      G204:
+        severity: high
+        confidence: medium
+      # Weak crypto — flag but medium severity for dev
+      G401:
+        severity: medium
+      # Insecure random — low severity for non-crypto use
+      G404:
+        severity: low
+
+  # ── staticcheck ────────────────────────────────────────────────
+  staticcheck:
+    # SA* checks are static analysis, ST* are simple style, S* are all
+    checks: ["all"]
+    # Explicitly exclude these checks
+    checks-exclude:
+      - SA1019  # Allow use of deprecated functions (flagged per-case)
+      - ST1005  # Allow uppercase error messages
+
+  # ── govet ──────────────────────────────────────────────────────
+  govet:
+    # Enable all analyzers
+    enable-all: true
+    # Disable specific analyzers
+    disable:
+      - fieldalignment  # Too noisy, not critical for functionality
+    # Settings for shadow checking
+    settings:
+      shadow:
+        strict: true
+
+  # ── errcheck ───────────────────────────────────────────────────
+  errcheck:
+    # Report about not checking of hidden errors
+    check-type-assertions: true
+    # Report about assignment of errors to blank identifier
+    check-blank: true
+    # Functions to exclude from checking
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprintf(os.Stdout, ...)
+      - fmt.Fprintln
+      - fmt.Fprint
+      - fmt.Print
+      - fmt.Println
+      - fmt.Printf
+      - (io.Writer).Write
+
+  # ── gosimple ───────────────────────────────────────────────────
+  gosimple:
+    checks: ["all"]
+
+  # ── unused ─────────────────────────────────────────────────────
+  unused:
+    # Treat exported identifiers as used
+    check-exported: false
+
+  # ── gocritic ───────────────────────────────────────────────────
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - experimental
+      - opinionated
+    disabled-tags:
+      - default  # Only to avoid duplication with other linters
+    settings:
+      hugeParam:
+        sizeThreshold: 80
+      rangeValCopy:
+        sizeThreshold: 128
+
+  # ── revive ─────────────────────────────────────────────────────
+  revive:
+    # Maximum issues per rule
+    max-issues-per-linter: 50
+    # Confidence threshold (0.0 to 1.0)
+    confidence: 0.8
+    rules:
+      - name: blank-imports
+        severity: warning
+      - name: context-as-argument
+        severity: warning
+      - name: context-keys-type
+        severity: error
+      - name: dot-imports
+        severity: warning
+        arguments: ["github.com/stretchr/testify"]
+      - name: error-return
+        severity: error
+      - name: error-strings
+        severity: warning
+      - name: error-naming
+        severity: warning
+      - name: exported
+        severity: warning
+      - name: increment-decrement
+        severity: warning
+      - name: indent-error-flow
+        severity: warning
+      - name: package-comments
+        severity: warning
+      - name: range
+        severity: warning
+      - name: receiver-naming
+        severity: warning
+      - name: time-naming
+        severity: warning
+      - name: unexported-return
+        severity: warning
+      - name: var-declaration
+        severity: warning
+      - name: var-naming
+        severity: warning
+        arguments: [["ID", "HTTP", "URL", "JSON", "API", "SIEM", "JWT"], ["", ""], {}]
+      - name: waitgroup-by-value
+        severity: error
+
+  # ── gofmt ──────────────────────────────────────────────────────
+  gofmt:
+    # Simplify code
+    simplify: true
+
+  # ── goimports ──────────────────────────────────────────────────
+  goimports:
+    # Put imports beginning with prefix after 3rd-party packages
+    local-prefixes: github.com/chaos-sec
+
+  # ── misspell ───────────────────────────────────────────────────
+  misspell:
+    locale: British
+
+  # ── unparam ────────────────────────────────────────────────────
+  unparam:
+    # Inspect exported functions
+    check-exported: false
+    # Suggest name for unnamed results
+    algo: cha
+
+  # ── prealloc ───────────────────────────────────────────────────
+  prealloc:
+    # Only suggest preallocation on simple loops
+    simple: true
+    range-loops: true
+    for-loops: false
+
+  # ── whitespace ─────────────────────────────────────────────────
+  whitespace:
+    multi-if: true
+    multi-func: true
+
+# ----------------------------------------------------------------------------
+# Severity configuration
+# ----------------------------------------------------------------------------
+severity:
+  # Default severity for all rules
+  default: warning
+
+  # Map of rule to severity
+  rules:
+    # ── Error severity (must fix) ──────────────────────
+    - linters:
+        - gosec
+      severity: error
+    - linters:
+        - govet
+      severity: error
+    - linters:
+        - errcheck
+      severity: error
+    - linters:
+        - bodyclose
+      severity: error
+    - linters:
+        - sqlclosecheck
+      severity: error
+
+    # ── Warning severity (should fix) ──────────────────
+    - linters:
+        - staticcheck
+      severity: warning
+    - linters:
+        - gosimple
+      severity: warning
+    - linters:
+        - gocritic
+      severity: warning
+    - linters:
+        - revive
+      severity: warning
+
+    # ── Info severity (nice to fix) ─────────────────────
+    - linters:
+        - unused
+      severity: info
+    - linters:
+        - unconvert
+      severity: info
+    - linters:
+        - unparam
+      severity: info
+    - linters:
+        - prealloc
+      severity: info
+    - linters:
+        - misspell
+      severity: info
+    - linters:
+        - gofmt
+      severity: info
+    - linters:
+        - goimports
+      severity: info
+
+# ----------------------------------------------------------------------------
+# Issues configuration
+# ----------------------------------------------------------------------------
+issues:
+  # Maximum count of issues per linter (0 = no limit)
+  max-issues-per-linter: 50
+
+  # Maximum count of issues with the same text (0 = no limit)
+  max-same-issues: 5
+
+  # Show all issues (don't hide existing issues on new lines)
+  new: false
+
+  # Fix found issues (use with caution)
+  fix: false
+
+  # Exclude generated files
+  exclude-generated: strict
+
+  # Default exclusion rules
+  exclude-rules:
+    # ── Exclude some linters from test files ──────────────
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+        - bodyclose
+        - unparam
+        - goconst
+
+    # ── Exclude generated files ──────────────────────────
+    - path: ".*generated.*\\.go$"
+      linters:
+        - all
+
+    # ── Exclude protobuf-generated files ─────────────────
+    - path: ".*\\.pb\\.go$"
+      linters:
+        - all
+
+    # ── Exclude mock files ───────────────────────────────
+    - path: "mock_.*\\.go$"
+      linters:
+        - all
+
+    # ── Allow defer in loops for resource cleanup ─────────
+    - linters:
+        - gosec
+      text: "G307"
+
+    # ── Allow fmt.Print* in cmd packages ─────────────────
+    - path: cmd/
+      linters:
+        - forbidigo
+
+    # ── Errcheck for defers is acceptable in some cases ───
+    - linters:
+        - errcheck
+      source: "defer .*Close"
+
+  # Exclude rules inherited from golangci-lint defaults
+  exclude-use-default: true

@@ -1,0 +1,443 @@
+# =============================================================================
+# Chaos-Sec Redis StatefulSet
+# =============================================================================
+# Production-ready Redis deployment with:
+# - Persistent storage (1Gi PVC) for AOF data durability
+# - Liveness and readiness probes for automatic health management
+# - Security-hardened with non-root user, dropped capabilities
+# - Headless Service for stable network identity (chaos-sec-redis-0, etc.)
+# - Password authentication via Secret reference
+# - Append-only file (AOF) persistence for data durability across restarts
+# =============================================================================
+
+# ──────────────────────────────────────────────
+# Headless Service for Redis
+# ──────────────────────────────────────────────
+# Required for StatefulSet stable network identities.
+# Enables direct pod addressing (e.g., chaos-sec-redis-0.chaos-sec-redis).
+apiVersion: v1
+kind: Service
+metadata:
+  name: chaos-sec-redis
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Headless service for Chaos-Sec Redis StatefulSet"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9121"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector:
+    app.kubernetes.io/name: chaos-sec-redis
+    app.kubernetes.io/component: cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+      appProtocol: redis
+
+---
+# =============================================================================
+# Redis StatefulSet
+# =============================================================================
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: chaos-sec-redis
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Chaos-Sec Redis cache and session store – persistent storage with AOF"
+    contact: "dev@chaos-sec.io"
+spec:
+  serviceName: chaos-sec-redis
+  replicas: 1
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  podManagementPolicy: OrderedReady
+
+  # ──────────────────────────────────────────────
+  # Update Strategy
+  # ──────────────────────────────────────────────
+  # RollingUpdate for StatefulSets. Partition can be used
+  # for canary-style updates in multi-replica setups.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chaos-sec-redis
+      app.kubernetes.io/component: cache
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chaos-sec-redis
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: chaos-sec
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      # ──────────────────────────────────────────
+      # Security Context – Pod Level
+      # ──────────────────────────────────────────
+      # Redis Alpine image uses UID 999 for the 'redis' user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+        supplementalGroups:
+          - 999
+
+      # ──────────────────────────────────────────
+      # Init Container: Prepare Data Directory
+      # ──────────────────────────────────────────
+      # Ensures the Redis data directory has correct ownership
+      # and permissions before the main container starts.
+      # This is necessary because PVCs may be owned by root.
+      initContainers:
+        - name: fix-permissions
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "[init] Ensuring Redis data directory permissions..."
+              chown -R redis:redis /data
+              chmod -R 770 /data
+              echo "[init] Data directory permissions set."
+              ls -la /data
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+
+      # ──────────────────────────────────────────
+      # Main Container: Redis
+      # ──────────────────────────────────────────
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+
+          # ──────────────────────────────────────
+          # Redis Server Command
+          # ──────────────────────────────────────
+          # - requirepass:     Authentication via password from Secret
+          # - appendonly yes:  AOF persistence for data durability
+          # - appendfsync:    Sync every second (balance of safety/performance)
+          # - save:           RDB snapshots disabled (AOF is primary)
+          # - maxmemory:      256MB limit to prevent OOM on the node
+          # - maxmemory-policy: allkeys-lru evicts least-recently-used keys
+          # - tcp-keepalive:   60s TCP keepalive for connection health
+          # - bind 0.0.0.0:   Listen on all interfaces within the pod
+          command:
+            - redis-server
+          args:
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
+            - --save
+            - ""
+            - --save
+            - ""
+            - --save
+            - ""
+            - --maxmemory
+            - "256mb"
+            - --maxmemory-policy
+            - allkeys-lru
+            - --tcp-keepalive
+            - "60"
+            - --bind
+            - "0.0.0.0"
+            - --port
+            - "6379"
+            - --databases
+            - "1"
+            - --timeout
+            - "300"
+            - --loglevel
+            - warning
+            - --hz
+            - "10"
+            - --dynamic-hz
+            - "yes"
+            - --lazyfree-lazy-eviction
+            - "yes"
+            - --lazyfree-lazy-expire
+            - "yes"
+            - --lazyfree-lazy-server-del
+            - "yes"
+
+          # ──────────────────────────────────────
+          # Ports
+          # ──────────────────────────────────────
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+
+          # ──────────────────────────────────────
+          # Environment Variables
+          # ──────────────────────────────────────
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: REDIS_PASSWORD
+
+          # ──────────────────────────────────────
+          # Resource Limits
+          # ──────────────────────────────────────
+          # Redis is primarily in-memory. Set memory limit to match
+          # maxmemory config to avoid OOM kills while allowing overhead.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi
+
+          # ──────────────────────────────────────
+          # Liveness Probe
+          # ──────────────────────────────────────
+          # Checks if Redis is alive and responsive.
+          # Uses PING command with authentication.
+          # Failure triggers a pod restart.
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  exec redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # ──────────────────────────────────────
+          # Readiness Probe
+          # ──────────────────────────────────────
+          # Checks if Redis is ready to accept client connections.
+          # Verifies the server can respond to PING and is not in
+          # a loading state (e.g., after restart with AOF recovery).
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Check basic connectivity
+                  RESPONSE=$(redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping 2>/dev/null)
+                  if [ "$RESPONSE" != "PONG" ]; then
+                    echo "Redis PING failed: $RESPONSE"
+                    exit 1
+                  fi
+
+                  # Check that Redis is not in loading state (AOF recovery)
+                  LOADING=$(redis-cli -a "$REDIS_PASSWORD" --no-auth-warning INFO server 2>/dev/null | grep "loading:1" || true)
+                  if [ -n "$LOADING" ]; then
+                    echo "Redis is still loading data"
+                    exit 1
+                  fi
+
+                  exit 0
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # ──────────────────────────────────────
+          # Startup Probe
+          # ──────────────────────────────────────
+          # Gives Redis time to load AOF data on first start or
+          # after a restart before liveness probe kicks in.
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  exec redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+
+          # ──────────────────────────────────────
+          # Container Security Context
+          # ──────────────────────────────────────
+          # Redis Alpine runs as UID 999 (redis user).
+          # Note: readOnlyRootFilesystem cannot be true because Redis
+          # needs to write to /data for AOF persistence and /tmp for
+          # temp files during BGSAVE operations.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+          # ──────────────────────────────────────
+          # Volume Mounts
+          # ──────────────────────────────────────
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+              # AOF and RDB files are stored here
+
+          # ──────────────────────────────────────
+          # Lifecycle Hooks
+          # ──────────────────────────────────────
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    # Attempt a graceful shutdown with a timeout.
+                    # This ensures AOF buffer is flushed to disk before
+                    # the container is terminated, preventing data loss.
+                    echo "[preStop] Initiating graceful Redis shutdown..."
+                    redis-cli -a "$REDIS_PASSWORD" --no-auth-warning SHUTDOWN NOSAVE 2>/dev/null || true
+                    echo "[preStop] Redis shutdown signal sent."
+
+      # ──────────────────────────────────────────
+      # Sidecar: Redis Exporter (Prometheus)
+      # ──────────────────────────────────────────
+      # Optional metrics exporter for monitoring Redis performance.
+      # Disabled by default – uncomment and configure for production monitoring.
+        # - name: redis-exporter
+        #   image: oliver006/redis_exporter:v1.55.0
+        #   imagePullPolicy: IfNotPresent
+        #   ports:
+        #     - name: metrics
+        #       containerPort: 9121
+        #       protocol: TCP
+        #   env:
+        #     - name: REDIS_ADDR
+        #       value: "redis://localhost:6379"
+        #     - name: REDIS_PASSWORD
+        #       valueFrom:
+        #         secretKeyRef:
+        #           name: chaos-sec-secrets
+        #           key: REDIS_PASSWORD
+        #     - name: REDIS_EXPORTER_CHECK_SINGLE_KEYS
+        #       value: "db0=session:*"
+        #   resources:
+        #     requests:
+        #       cpu: 25m
+        #       memory: 32Mi
+        #     limits:
+        #       cpu: 50m
+        #       memory: 64Mi
+        #   securityContext:
+        #     runAsNonRoot: true
+        #     runAsUser: 9121
+        #     runAsGroup: 9121
+        #     allowPrivilegeEscalation: false
+        #     readOnlyRootFilesystem: true
+        #     capabilities:
+        #       drop:
+        #         - ALL
+
+      # ──────────────────────────────────────────
+      # Volumes
+      # ──────────────────────────────────────────
+      volumes: []
+
+      # ──────────────────────────────────────────
+      # Pod Lifecycle & Scheduling
+      # ──────────────────────────────────────────
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      serviceAccountName: chaos-sec-redis
+      automountServiceAccountToken: false
+
+      # ──────────────────────────────────────────
+      # Topology Spread Constraints
+      # ──────────────────────────────────────────
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: chaos-sec-redis
+
+  # ──────────────────────────────────────────────
+  # Volume Claim Template
+  # ──────────────────────────────────────────────
+  # Persistent storage for Redis AOF and RDB data.
+  # Uses the default StorageClass (gp3 on EKS, standard on GKE).
+  # 1Gi is sufficient for session cache; increase if using Redis
+  # as a primary data store.
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          app.kubernetes.io/name: chaos-sec-redis
+          app.kubernetes.io/component: cache
+          app.kubernetes.io/part-of: chaos-sec
+        annotations:
+          description: "Persistent storage for Chaos-Sec Redis AOF data"
+          # Enable volume snapshot for backup
+          # backup.velero.io/backup-volumes: "redis-data"
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi

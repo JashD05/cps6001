@@ -1,0 +1,346 @@
+# =============================================================================
+# Chaos-Sec Backend Deployment
+# =============================================================================
+# Production-ready deployment for the Chaos-Sec Go backend API server.
+# - Rolling update strategy for zero-downtime deployments
+# - Security-hardened with non-root user, dropped capabilities, read-only root
+# - Liveness/readiness probes for automatic health management
+# - ConfigMap and Secret references for external configuration
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chaos-sec-backend
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-backend
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Chaos-Sec Backend API - Go microservice"
+    contact: "dev@chaos-sec.io"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 300
+  minReadySeconds: 10
+
+  # ──────────────────────────────────────────────
+  # Rolling Update Strategy
+  # ──────────────────────────────────────────────
+  # Max 1 unavailable pod and 1 surge pod at a time
+  # ensures at least 1 healthy pod during rollout
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chaos-sec-backend
+      app.kubernetes.io/component: api
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chaos-sec-backend
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: chaos-sec
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+        # Force pod restart on ConfigMap or Secret change
+        kubectl.kubernetes.io/restartedAt: ""
+    spec:
+      # ──────────────────────────────────────────
+      # Pod Scheduling & Anti-Affinity
+      # ──────────────────────────────────────────
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - chaos-sec-backend
+                topologyKey: kubernetes.io/os
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - chaos-sec-backend
+              topologyKey: topology.kubernetes.io/zone
+
+      # ──────────────────────────────────────────
+      # Security Context - Pod Level
+      # ──────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+        supplementalGroups:
+          - 1000
+
+      # ──────────────────────────────────────────
+      # Init Container: Run Database Migrations
+      # ──────────────────────────────────────────
+      initContainers:
+        - name: db-migrate
+          image: chaos-sec/backend:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /app/chaos-sec-backend
+          args:
+            - "--migrate"
+            - "--migrations-path"
+            - "file:///app/migrations"
+          envFrom:
+            - configMapRef:
+                name: chaos-sec-config
+            - secretRef:
+                name: chaos-sec-secrets
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+      # ──────────────────────────────────────────
+      # Containers
+      # ──────────────────────────────────────────
+      containers:
+        - name: backend
+          image: chaos-sec/backend:latest
+          imagePullPolicy: IfNotPresent
+
+          # ──────────────────────────────────────
+          # Ports
+          # ──────────────────────────────────────
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          # ──────────────────────────────────────
+          # Environment Variables
+          # ──────────────────────────────────────
+          envFrom:
+            - configMapRef:
+                name: chaos-sec-config
+            - secretRef:
+                name: chaos-sec-secrets
+
+          env:
+            # Override computed fields that reference other services
+            - name: CHAOS_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: chaos-sec-config
+                  key: DATABASE_HOST
+            - name: CHAOS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: DATABASE_PASSWORD
+            - name: CHAOS_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: REDIS_PASSWORD
+            - name: CHAOS_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: JWT_SECRET
+            - name: CHAOS_SIEM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: SIEM_API_KEY
+            # Pod-level computed overrides for Kubernetes-aware config
+            - name: CHAOS_K8S_IN_CLUSTER
+              value: "true"
+            - name: CHAOS_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+
+          # ──────────────────────────────────────
+          # Resource Limits
+          # ──────────────────────────────────────
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          # ──────────────────────────────────────
+          # Liveness Probe
+          # ──────────────────────────────────────
+          # Checks if the process is alive and healthy.
+          # Failure triggers a pod restart.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+              httpHeaders:
+                - name: X-Health-Check
+                  value: k8s-liveness
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # ──────────────────────────────────────
+          # Readiness Probe
+          # ──────────────────────────────────────
+          # Checks if the backend can serve traffic
+          # (database, redis, and dependent services reachable).
+          # Failure removes the pod from service endpoints.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+              httpHeaders:
+                - name: X-Health-Check
+                  value: k8s-readiness
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # ──────────────────────────────────────
+          # Startup Probe
+          # ──────────────────────────────────────
+          # Gives the application time to initialize before
+          # liveness/readiness probes take over.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+
+          # ──────────────────────────────────────
+          # Container Security Context
+          # ──────────────────────────────────────
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # ──────────────────────────────────────
+          # Volume Mounts
+          # ──────────────────────────────────────
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/config
+              readOnly: true
+            - name: tls-certs
+              mountPath: /app/tls
+              readOnly: true
+            - name: tmp-volume
+              mountPath: /tmp
+            - name: migrations-volume
+              mountPath: /app/migrations
+              readOnly: true
+
+      # ──────────────────────────────────────────
+      # Volumes
+      # ──────────────────────────────────────────
+      volumes:
+        - name: config-volume
+          configMap:
+            name: chaos-sec-config
+            items:
+              - key: LOG_LEVEL
+                path: log_level
+            defaultMode: 0444
+        - name: tls-certs
+          secret:
+            secretName: chaos-sec-tls
+            defaultMode: 0400
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: ca.crt
+                path: ca.crt
+        - name: tmp-volume
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: migrations-volume
+          configMap:
+            name: chaos-sec-migrations
+            defaultMode: 0555
+
+      # ──────────────────────────────────────────
+      # Pod Scheduling Constraints
+      # ──────────────────────────────────────────
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      serviceAccountName: chaos-sec-backend
+      automountServiceAccountToken: true
+
+      # ──────────────────────────────────────────
+      # Topology Spread Constraints
+      # ──────────────────────────────────────────
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: chaos-sec-backend

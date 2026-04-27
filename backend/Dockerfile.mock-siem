@@ -1,0 +1,472 @@
+# =============================================================================
+# Chaos-Sec Mock SIEM Server
+# =============================================================================
+# A lightweight in-memory SIEM simulator for local development and testing.
+# Provides alert ingestion and querying endpoints compatible with the
+# Chaos-Sec SIEM integration interface.
+# =============================================================================
+
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build
+
+# Write the mock SIEM server source code inline
+RUN cat <<'GOEOF' > main.go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+// Alert represents a security alert in the SIEM system.
+type Alert struct {
+	ID        string                 `json:"id"`
+	Type      string                 `json:"type"`
+	Severity  string                 `json:"severity"`
+	Source    string                 `json:"source"`
+	Message   string                 `json:"message"`
+	Timestamp time.Time              `json:"timestamp"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// IngestRequest is the payload for alert ingestion.
+type IngestRequest struct {
+	Type     string                 `json:"type"`
+	Severity string                 `json:"severity"`
+	Source   string                 `json:"source"`
+	Message  string                 `json:"message"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// QueryResponse wraps paginated alert query results.
+type QueryResponse struct {
+	Total   int     `json:"total"`
+	Alerts  []Alert `json:"alerts"`
+	Offset  int     `json:"offset"`
+	Limit   int     `json:"limit"`
+}
+
+// ErrorResponse represents a standard error payload.
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Code    int    `json:"code"`
+	Details string `json:"details,omitempty"`
+}
+
+// HealthResponse represents the health check payload.
+type HealthResponse struct {
+	Status    string `json:"status"`
+	Timestamp string `json:"timestamp"`
+	Uptime    string `json:"uptime"`
+	Version   string `json:"version"`
+	Alerts    int    `json:"alerts_stored"`
+}
+
+// SIEMStore holds alerts in memory with thread-safe access.
+type SIEMStore struct {
+	mu     sync.RWMutex
+	alerts []Alert
+	nextID int
+}
+
+var (
+	store     *SIEMStore
+	startTime time.Time
+	version   = "1.0.0"
+)
+
+func init() {
+	store = &SIEMStore{
+		alerts: make([]Alert, 0),
+		nextID: 1,
+	}
+	startTime = time.Now()
+}
+
+func main() {
+	port := os.Getenv("SIEM_PORT")
+	if port == "" {
+		port = "8089"
+	}
+	logLevel := os.Getenv("SIEM_LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/alerts", alertsHandler)
+	mux.HandleFunc("/health", healthHandler)
+
+	// Middleware chain
+	handler := loggingMiddleware(corsMiddleware(recoveryMiddleware(mux)), logLevel)
+
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Graceful shutdown
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		log.Println("[SIEM] Shutting down gracefully...")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(ctx); err != nil {
+			log.Fatalf("[SIEM] Forced shutdown: %v", err)
+		}
+	}()
+
+	log.Printf("[SIEM] Mock SIEM server v%s starting on :%s (log_level=%s)", version, port, logLevel)
+	log.Printf("[SIEM] Endpoints: POST /api/alerts, GET /api/alerts, GET /health")
+
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatalf("[SIEM] Server error: %v", err)
+	}
+	log.Println("[SIEM] Server stopped")
+}
+
+// alertsHandler routes POST to ingest and GET to query.
+func alertsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		ingestAlert(w, r)
+	case http.MethodGet:
+		queryAlerts(w, r)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{
+			Error: "method_not_allowed",
+			Code:  http.StatusMethodNotAllowed,
+			Details: fmt.Sprintf("Method %s is not supported. Use GET or POST.",
+				r.Method),
+		})
+	}
+}
+
+// ingestAlert handles POST /api/alerts - stores a new alert.
+func ingestAlert(w http.ResponseWriter, r *http.Request) {
+	var req IngestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{
+			Error:   "invalid_json",
+			Code:    http.StatusBadRequest,
+			Details: err.Error(),
+		})
+		return
+	}
+
+	// Validate required fields
+	if req.Type == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{
+			Error:   "validation_error",
+			Code:    http.StatusBadRequest,
+			Details: "field 'type' is required",
+		})
+		return
+	}
+	if req.Severity == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{
+			Error:   "validation_error",
+			Code:    http.StatusBadRequest,
+			Details: "field 'severity' is required",
+		})
+		return
+	}
+	if req.Message == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{
+			Error:   "validation_error",
+			Code:    http.StatusBadRequest,
+			Details: "field 'message' is required",
+		})
+		return
+	}
+
+	// Validate severity level
+	validSeverities := map[string]bool{
+		"critical": true, "high": true, "medium": true,
+		"low": true, "info": true,
+	}
+	if !validSeverities[strings.ToLower(req.Severity)] {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{
+			Error:   "validation_error",
+			Code:    http.StatusBadRequest,
+			Details: "severity must be one of: critical, high, medium, low, info",
+		})
+		return
+	}
+
+	store.mu.Lock()
+	alert := Alert{
+		ID:        fmt.Sprintf("ALT-%06d", store.nextID),
+		Type:      req.Type,
+		Severity:  strings.ToLower(req.Severity),
+		Source:    req.Source,
+		Message:   req.Message,
+		Timestamp: time.Now().UTC(),
+		Metadata:  req.Metadata,
+	}
+	store.alerts = append(store.alerts, alert)
+	store.nextID++
+	store.mu.Unlock()
+
+	log.Printf("[SIEM] Ingested alert %s: type=%s severity=%s source=%s",
+		alert.ID, alert.Type, alert.Severity, alert.Source)
+
+	writeJSON(w, http.StatusCreated, alert)
+}
+
+// queryAlerts handles GET /api/alerts - queries alerts with optional filters.
+// Query parameters:
+//   - type:     filter by alert type (exact match)
+//   - severity: filter by severity level (exact match)
+//   - source:   filter by source (exact match)
+//   - from:     filter alerts after this timestamp (RFC3339)
+//   - to:       filter alerts before this timestamp (RFC3339)
+//   - limit:    max number of alerts to return (default 50, max 500)
+//   - offset:   number of alerts to skip (default 0)
+func queryAlerts(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	q := r.URL.Query()
+
+	filterType := strings.ToLower(q.Get("type"))
+	filterSeverity := strings.ToLower(q.Get("severity"))
+	filterSource := q.Get("source")
+	filterFrom := q.Get("from")
+	filterTo := q.Get("to")
+
+	limit := 50
+	if l := q.Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	offset := 0
+	if o := q.Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	// Parse time filters
+	var fromTime, toTime time.Time
+	var err error
+	if filterFrom != "" {
+		fromTime, err = time.Parse(time.RFC3339, filterFrom)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{
+				Error:   "invalid_time_format",
+				Code:    http.StatusBadRequest,
+				Details: "'from' must be RFC3339 format (e.g., 2024-01-01T00:00:00Z)",
+			})
+			return
+		}
+	}
+	if filterTo != "" {
+		toTime, err = time.Parse(time.RFC3339, filterTo)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{
+				Error:   "invalid_time_format",
+				Code:    http.StatusBadRequest,
+				Details: "'to' must be RFC3339 format (e.g., 2024-12-31T23:59:59Z)",
+			})
+			return
+		}
+	}
+
+	// Filter alerts
+	store.mu.RLock()
+	filtered := make([]Alert, 0, len(store.alerts))
+	for _, alert := range store.alerts {
+		if filterType != "" && strings.ToLower(alert.Type) != filterType {
+			continue
+		}
+		if filterSeverity != "" && alert.Severity != filterSeverity {
+			continue
+		}
+		if filterSource != "" && alert.Source != filterSource {
+			continue
+		}
+		if !fromTime.IsZero() && alert.Timestamp.Before(fromTime) {
+			continue
+		}
+		if !toTime.IsZero() && alert.Timestamp.After(toTime) {
+			continue
+		}
+		filtered = append(filtered, alert)
+	}
+	total := len(filtered)
+	store.mu.RUnlock()
+
+	// Apply pagination
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+
+	page := filtered[start:end]
+	if page == nil {
+		page = []Alert{}
+	}
+
+	writeJSON(w, http.StatusOK, QueryResponse{
+		Total:  total,
+		Alerts: page,
+		Offset: offset,
+		Limit:  limit,
+	})
+}
+
+// healthHandler handles GET /health.
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{
+			Error:   "method_not_allowed",
+			Code:    http.StatusMethodNotAllowed,
+			Details: "Use GET",
+		})
+		return
+	}
+
+	store.mu.RLock()
+	count := len(store.alerts)
+	store.mu.RUnlock()
+
+	writeJSON(w, http.StatusOK, HealthResponse{
+		Status:    "healthy",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Uptime:    time.Since(startTime).Round(time.Second).String(),
+		Version:   version,
+		Alerts:    count,
+	})
+}
+
+// loggingMiddleware logs each request.
+func loggingMiddleware(next http.Handler, level string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if level != "silent" {
+			start := time.Now()
+			next.ServeHTTP(w, r)
+			if level == "debug" || level == "info" {
+				log.Printf("[SIEM] %s %s %s %dms",
+					r.Method, r.URL.Path, r.RemoteAddr,
+					time.Since(start).Milliseconds())
+			}
+		} else {
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
+// corsMiddleware adds CORS headers for development.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers",
+			"Content-Type, Authorization, X-Request-ID")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// recoveryMiddleware recovers from panics and returns a 500.
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[SIEM] Panic recovered: %v", rec)
+				writeJSON(w, http.StatusInternalServerError, ErrorResponse{
+					Error:   "internal_error",
+					Code:    http.StatusInternalServerError,
+					Details: "An unexpected error occurred",
+				})
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// writeJSON writes a JSON response with the proper content type.
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("[SIEM] Failed to encode JSON response: %v", err)
+	}
+}
+GOEOF
+
+# Initialize Go module (required by Go 1.25+)
+RUN go mod init mock-siem && go mod tidy
+
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux \
+    go build -ldflags="-s -w -X main.version=1.0.0" \
+    -o /mock-siem-server .
+
+# =============================================================================
+# Runtime stage
+# =============================================================================
+FROM alpine:3.18
+
+RUN apk add --no-cache ca-certificates tzdata wget
+
+# Create non-root user for security
+RUN addgroup -S siem && adduser -S -G siem siem
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /mock-siem-server /app/mock-siem-server
+
+# Create data directory for optional persistence
+RUN mkdir -p /data && chown -R siem:siem /app /data
+
+USER siem
+
+ENV SIEM_PORT=8089
+ENV SIEM_LOG_LEVEL=info
+
+EXPOSE 8089
+
+# Volume for optional data persistence
+VOLUME ["/data"]
+
+# Health check against the /health endpoint
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8089/health || exit 1
+
+ENTRYPOINT ["/app/mock-siem-server"]

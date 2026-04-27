@@ -1,0 +1,703 @@
+# ============================================================================
+# Chaos-Sec: Prometheus Alert Rules
+# Comprehensive alerting for backend API, infrastructure services, Kubernetes
+# pods, and chaos experiment lifecycle
+# ============================================================================
+
+groups:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Backend API Alerts
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-backend
+    rules:
+      # Backend completely unreachable — no metrics scraped for 5 minutes
+      - alert: BackendDown
+        expr: |
+          absent(up{job="chaos-sec-backend"} == 1) == 1
+          or (up{job="chaos-sec-backend"} == 0)
+        for: 5m
+        labels:
+          severity: critical
+          component: backend
+          team: platform
+        annotations:
+          summary: "Chaos-Sec backend is down"
+          description: >
+            The Chaos-Sec backend API has been unreachable or not returning
+            metrics for 5 minutes. Instance {{ $labels.instance }} is down.
+            Check pod health, logs, and database connectivity.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/backend-down"
+
+      # High 5xx error rate exceeding 5% over a 5-minute window
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{job="chaos-sec-backend", code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="chaos-sec-backend"}[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: backend
+          team: platform
+        annotations:
+          summary: "Backend error rate exceeds 5%"
+          description: >
+            The backend 5xx error rate is {{ $value | humanizePercentage }} of
+            all requests (threshold: 5%). This has been sustained for 5 minutes.
+            Investigate application logs and downstream service health.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/high-error-rate"
+
+      # P95 latency exceeding 2 seconds over a 5-minute window
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket{job="chaos-sec-backend"}[5m]))
+            by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: backend
+          team: platform
+        annotations:
+          summary: "Backend P95 latency exceeds 2 seconds"
+          description: >
+            The 95th percentile request latency is {{ $value }}s, which
+            exceeds the 2s threshold. Users may experience degraded performance.
+            Check for slow database queries, Redis latency, or resource limits.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/high-latency"
+
+      # Critical error rate — 5xx exceeds 20%
+      - alert: CriticalErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{job="chaos-sec-backend", code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="chaos-sec-backend"}[5m]))
+          ) > 0.20
+        for: 2m
+        labels:
+          severity: critical
+          component: backend
+          team: platform
+        annotations:
+          summary: "Backend critical error rate exceeds 20%"
+          description: >
+            The backend 5xx error rate is {{ $value | humanizePercentage }},
+            exceeding the critical 20% threshold. Immediate investigation required.
+            Possible causes: database outage, misconfiguration, or deployment bug.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/critical-error-rate"
+
+      # Elevated 4xx rate — possible abuse or misconfigured clients
+      - alert: ElevatedClientErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{job="chaos-sec-backend", code=~"4.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="chaos-sec-backend"}[5m]))
+          ) > 0.30
+        for: 10m
+        labels:
+          severity: info
+          component: backend
+          team: platform
+        annotations:
+          summary: "Elevated 4xx client error rate"
+          description: >
+            Client error (4xx) rate is {{ $value | humanizePercentage }},
+            sustained for 10 minutes. This may indicate API misuse, broken
+            clients, or rate limiting kicking in.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Database Alerts (PostgreSQL)
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-database
+    rules:
+      # Backend cannot connect to PostgreSQL
+      - alert: DatabaseConnectionFailed
+        expr: |
+          chaos_sec_db_connection_errors_total > 0
+          and
+          increase(chaos_sec_db_connection_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+          team: platform
+        annotations:
+          summary: "PostgreSQL connection failures detected"
+          description: >
+            The backend has experienced {{ $value }} database connection errors
+            in the last 5 minutes. PostgreSQL may be down, at max connections,
+            or network issues exist. Check: pg_isready, connection pool, and
+            max_connections setting.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/database-connection-failed"
+
+      # PostgreSQL connection pool near saturation
+      - alert: DatabasePoolExhaustion
+        expr: |
+          chaos_sec_db_connections_in_use
+          /
+          chaos_sec_db_max_open_connections > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+          team: platform
+        annotations:
+          summary: "Database connection pool approaching exhaustion"
+          description: >
+            The database connection pool is {{ $value | humanizePercentage }}
+            utilized (threshold: 85%). Connections may be exhausted soon,
+            causing request failures. Consider increasing pool size or
+            investigating connection leaks.
+
+      # Slow database queries
+      - alert: SlowDatabaseQueries
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(chaos_sec_db_query_duration_seconds_bucket[5m]))
+            by (le)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+          team: platform
+        annotations:
+          summary: "Database queries are slow (P99 > 1s)"
+          description: >
+            The 99th percentile database query duration is {{ $value }}s,
+            exceeding the 1s threshold. Investigate slow queries, missing
+            indexes, or table bloat. Run EXPLAIN ANALYZE on suspect queries.
+
+      # PostgreSQL replication lag (if replicas exist)
+      - alert: DatabaseReplicationLag
+        expr: |
+          pg_replication_lag_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+          team: platform
+        annotations:
+          summary: "PostgreSQL replication lag exceeds 30s"
+          description: >
+            PostgreSQL replication lag is {{ $value }}s, meaning read replicas
+            are significantly behind the primary. Stale reads may be served
+            to users.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Redis Alerts
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-redis
+    rules:
+      # Backend cannot connect to Redis
+      - alert: RedisConnectionFailed
+        expr: |
+          chaos_sec_redis_connection_errors_total > 0
+          and
+          increase(chaos_sec_redis_connection_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+          component: cache
+          team: platform
+        annotations:
+          summary: "Redis connection failures detected"
+          description: >
+            The backend has experienced {{ $value }} Redis connection errors
+            in the last 5 minutes. Redis may be down, at max connections, or
+            experiencing network issues. Check: redis-cli ping, memory usage,
+            and maxclients setting.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/redis-connection-failed"
+
+      # Redis memory approaching maxmemory limit
+      - alert: RedisMemoryHigh
+        expr: |
+          redis_memory_used_bytes
+          /
+          redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: cache
+          team: platform
+        annotations:
+          summary: "Redis memory usage exceeds 85%"
+          description: >
+            Redis memory usage is {{ $value | humanizePercentage }} of the
+            configured maxmemory. Keys may start being evicted soon. Consider
+            increasing maxmemory, optimizing data structures, or reviewing
+            TTL policies.
+
+      # Redis key evictions occurring — data is being lost
+      - alert: RedisKeyEvictions
+        expr: |
+          increase(redis_evicted_keys_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: cache
+          team: platform
+        annotations:
+          summary: "Redis is evicting keys"
+          description: >
+            Redis has evicted {{ $value }} keys in the last 5 minutes.
+            This indicates memory pressure. Cached data is being lost,
+            which may cause increased database load.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Kubernetes Pod Alerts
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-kubernetes
+    rules:
+      # Pod is in CrashLoopBackOff state
+      - alert: PodCrashLooping
+        expr: |
+          rate(kube_pod_container_status_restarts_total[15m]) > 0
+          and
+            kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          component: kubernetes
+          team: platform
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash-looping"
+          description: >
+            Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has
+            restarted {{ $value }} times in the last 15 minutes and is in
+            CrashLoopBackOff. Check pod logs with:
+            kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} --previous
+          runbook_url: "https://docs.chaos-sec.io/runbooks/pod-crash-looping"
+
+      # Pod not ready for more than 5 minutes
+      - alert: PodNotReady
+        expr: |
+          kube_pod_status_phase{phase!="Running"} == 1
+          or
+          (
+            kube_pod_status_condition{condition="Ready", status="false"} == 1
+            and
+            kube_pod_status_phase{phase="Running"} == 1
+          )
+        for: 5m
+        labels:
+          severity: warning
+          component: kubernetes
+          team: platform
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is not ready"
+          description: >
+            Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has
+            been in a non-ready state for over 5 minutes. The pod may be
+            running but failing health checks. Investigate readiness probe
+            failures and application logs.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/pod-not-ready"
+
+      # Deployment replicas mismatch — not enough healthy pods
+      - alert: DeploymentReplicasMismatch
+        expr: |
+          kube_deployment_spec_replicas
+            !=
+          kube_deployment_status_available_replicas
+        for: 10m
+        labels:
+          severity: warning
+          component: kubernetes
+          team: platform
+        annotations:
+          summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} replicas mismatch"
+          description: >
+            Deployment {{ $labels.deployment }} in namespace
+            {{ $labels.namespace }} has a replica mismatch. Specified:
+            {{ $labels.spec_replicas }}, Available: insufficient. Some pods
+            may be failing to start or pass health checks.
+
+      # Pod pending — cannot be scheduled
+      - alert: PodPending
+        expr: |
+          kube_pod_status_phase{phase="Pending"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          component: kubernetes
+          team: platform
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is pending"
+          description: >
+            Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has
+            been in Pending state for 10 minutes. This typically indicates
+            insufficient resources (CPU/memory), no matching node selector,
+            or persistent volume claim issues.
+
+      # Job failure in the chaos-sec-experiments namespace
+      - alert: ExperimentJobFailed
+        expr: |
+          kube_job_status_failed{namespace="chaos-sec-experiments"} == 1
+        for: 1m
+        labels:
+          severity: warning
+          component: kubernetes
+          team: platform
+        annotations:
+          summary: "Experiment job {{ $labels.namespace }}/{{ $labels.job_name }} failed"
+          description: >
+            Kubernetes job {{ $labels.job_name }} in namespace
+            {{ $labels.namespace }} has failed. This may be an experiment
+            execution that encountered an error. Check job events and
+            pod logs for details.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Resource Alerts (Node/Pod Level)
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-resources
+    rules:
+      # Memory usage exceeds 80% of limit
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            container_memory_working_set_bytes
+            /
+            container_spec_memory_limit_bytes
+          ) > 0.80
+          and
+          container_spec_memory_limit_bytes > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+          team: platform
+        annotations:
+          summary: "Container {{ $labels.namespace }}/{{ $labels.pod }} memory usage exceeds 80%"
+          description: >
+            Container {{ $labels.pod }} in namespace {{ $labels.namespace }}
+            is using {{ $value | humanizePercentage }} of its memory limit.
+            OOMKill may occur if usage continues to grow. Consider increasing
+            memory limits or investigating memory leaks.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/high-memory-usage"
+
+      # CPU usage exceeds 80% of limit
+      - alert: HighCPUUsage
+        expr: |
+          (
+            sum(rate(container_cpu_usage_seconds_total[5m]))
+            by (namespace, pod, container)
+            /
+            sum(container_spec_cpu_quota
+              / container_spec_cpu_period)
+            by (namespace, pod, container)
+          ) > 0.80
+          and
+          sum(container_spec_cpu_quota) by (namespace, pod, container) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+          team: platform
+        annotations:
+          summary: "Container {{ $labels.namespace }}/{{ $labels.pod }} CPU usage exceeds 80%"
+          description: >
+            Container {{ $labels.pod }} in namespace {{ $labels.namespace }}
+            is using {{ $value | humanizePercentage }} of its CPU limit.
+            Throttling may occur, degrading application performance. Consider
+            increasing CPU limits or optimizing compute-heavy operations.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/high-cpu-usage"
+
+      # Disk space below 10% on node
+      - alert: DiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|nsfs"}
+            /
+            node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|nsfs"}
+          ) < 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+          team: platform
+        annotations:
+          summary: "Disk space below 10% on {{ $labels.instance }}"
+          description: >
+            Node {{ $labels.instance }} has less than 10% disk space
+            remaining on the root filesystem ({{ $value | humanizePercentage }}
+            free). This can cause pod evictions, logging failures, and
+            database corruption. Clean up old logs, unused images, and
+            PVCs, or expand the volume.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/disk-space-low"
+
+      # Disk space critically low — below 5%
+      - alert: DiskSpaceCritical
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|nsfs"}
+            /
+            node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|nsfs"}
+          ) < 0.05
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+          team: platform
+        annotations:
+          summary: "Disk space CRITICALLY low on {{ $labels.instance }}"
+          description: >
+            Node {{ $labels.instance }} has less than 5% disk space
+            remaining on the root filesystem. IMMEDIATE ACTION REQUIRED.
+            Services will start failing soon. Free disk space immediately.
+
+      # Node not ready
+      - alert: NodeNotReady
+        expr: |
+          kube_node_status_condition{condition="Ready", status!="true"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          component: infrastructure
+          team: platform
+        annotations:
+          summary: "Node {{ $labels.node }} is not ready"
+          description: >
+            Kubernetes node {{ $labels.node }} has been in a NotReady state
+            for over 5 minutes. Pods may be evicted. Check node health,
+            network connectivity, and kubelet status.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Security & TLS Alerts
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-security
+    rules:
+      # TLS certificate expiring within 30 days
+      - alert: SSLExpirySoon
+        expr: |
+          probe_tls_cert_info{job="blackbox"}
+            - on (instance, port) group_right
+          probe_ssl_earliest_cert_expiry < 30 * 24 * 3600
+        for: 1h
+        labels:
+          severity: warning
+          component: security
+          team: platform
+        annotations:
+          summary: "TLS certificate for {{ $labels.instance }} expires in less than 30 days"
+          description: >
+            The TLS certificate for {{ $labels.instance }} expires in
+            {{ $value | humanizeDuration }}. Renew the certificate before
+            it expires to avoid service disruption. Contact your certificate
+            provider or use cert-manager for automatic renewal.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/ssl-expiry-soon"
+
+      # TLS certificate expiring within 7 days — critical
+      - alert: SSLExpiryCritical
+        expr: |
+          probe_tls_cert_info{job="blackbox"}
+            - on (instance, port) group_right
+          probe_ssl_earliest_cert_expiry < 7 * 24 * 3600
+        for: 15m
+        labels:
+          severity: critical
+          component: security
+          team: platform
+        annotations:
+          summary: "TLS certificate for {{ $labels.instance }} expires in less than 7 days!"
+          description: >
+            The TLS certificate for {{ $labels.instance }} expires in
+            {{ $value | humanizeDuration }}. IMMEDIATE RENEWAL REQUIRED.
+            Failure to renew will result in browser warnings and service
+            disruption.
+
+      # Certificate already expired
+      - alert: SSLCertificateExpired
+        expr: |
+          probe_ssl_earliest_cert_expiry < 0
+        for: 5m
+        labels:
+          severity: critical
+          component: security
+          team: platform
+        annotations:
+          summary: "TLS certificate for {{ $labels.instance }} has EXPIRED"
+          description: >
+            The TLS certificate for {{ $labels.instance }} has expired.
+            Users will see security warnings and connections may fail.
+            IMMEDIATE ACTION: Renew and deploy the certificate now.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Chaos Experiment Alerts
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-experiments
+    rules:
+      # Experiment stuck in "running" state for over 30 minutes
+      - alert: ExperimentStuckRunning
+        expr: |
+          chaos_sec_experiments_running > 0
+          and
+          (
+            time() - chaos_sec_experiments_oldest_running_start_timestamp_seconds
+          ) > 1800
+        for: 5m
+        labels:
+          severity: warning
+          component: experiments
+          team: platform
+        annotations:
+          summary: "Experiment stuck in running state for over 30 minutes"
+          description: >
+            A chaos experiment has been running for {{ $value | humanizeDuration }},
+            exceeding the 30-minute threshold. It may be stuck due to a
+            Kubernetes error, misconfigured timeout, or orphaned resources.
+            Check experiment status in the dashboard and consider manual
+            cancellation. Check: kubectl -n chaos-sec-experiments get jobs
+          runbook_url: "https://docs.chaos-sec.io/runbooks/experiment-stuck"
+
+      # Experiment failure rate too high
+      - alert: HighExperimentFailureRate
+        expr: |
+          (
+            sum(increase(chaos_sec_experiments_completed_total{status="failed"}[1h]))
+            /
+            sum(increase(chaos_sec_experiments_completed_total[1h]))
+          ) > 0.50
+        for: 30m
+        labels:
+          severity: warning
+          component: experiments
+          team: platform
+        annotations:
+          summary: "Over 50% of experiments are failing"
+          description: >
+            {{ $value | humanizePercentage }} of completed experiments in
+            the last hour have failed. This may indicate infrastructure
+            issues, misconfigured experiment templates, or Kubernetes
+            cluster problems. Review recent experiment results.
+
+      # Too many concurrent experiments running
+      - alert: TooManyConcurrentExperiments
+        expr: |
+          chaos_sec_experiments_running > 10
+        for: 5m
+        labels:
+          severity: info
+          component: experiments
+          team: platform
+        annotations:
+          summary: "More than 10 experiments running concurrently"
+          description: >
+            There are {{ $value }} experiments running simultaneously.
+            This may overwhelm the target cluster or exceed configured
+            concurrency limits. Consider queueing experiments or
+            increasing cluster resources.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # SIEM Connector Alerts
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-siem
+    rules:
+      # SIEM connector is down or unreachable
+      - alert: SIEMConnectorDown
+        expr: |
+          chaos_sec_siem_connector_up == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: siem
+          team: platform
+        annotations:
+          summary: "SIEM connector is down"
+          description: >
+            The SIEM connector ({{ $labels.provider }}) has been unreachable
+            for 5 minutes. Chaos experiment results that rely on SIEM alert
+            correlation will be incomplete. Alerts will not be ingested.
+            Check: SIEM service health, network connectivity, and
+            authentication credentials.
+          runbook_url: "https://docs.chaos-sec.io/runbooks/siem-connector-down"
+
+      # High SIEM ingestion latency — alerts may be delayed
+      - alert: SIEMIngestionLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(chaos_sec_siem_ingestion_duration_seconds_bucket[5m]))
+            by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: siem
+          team: platform
+        annotations:
+          summary: "SIEM alert ingestion latency is high (P95 > 5s)"
+          description: >
+            The 95th percentile SIEM ingestion latency is {{ $value }}s.
+            Experiment control validations that depend on timely SIEM
+            alerts may report false negatives. Investigate SIEM service
+            performance and network conditions.
+
+      # SIEM alert ingestion failures
+      - alert: SIEMIngestionErrors
+        expr: |
+          increase(chaos_sec_siem_ingestion_errors_total[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: siem
+          team: platform
+        annotations:
+          summary: "SIEM alert ingestion errors detected"
+          description: >
+            The SIEM connector has experienced {{ $value }} ingestion errors
+            in the last 10 minutes. Some alerts may be lost, affecting
+            experiment control validation accuracy.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Messaging / RabbitMQ Alerts
+  # ──────────────────────────────────────────────────────────────────────────
+  - name: chaos-sec-messaging
+    rules:
+      # RabbitMQ queue depth growing unboundedly
+      - alert: RabbitMQQueueDepthHigh
+        expr: |
+          rabbitmq_queue_messages > 10000
+        for: 10m
+        labels:
+          severity: warning
+          component: messaging
+          team: platform
+        annotations:
+          summary: "RabbitMQ queue {{ $labels.queue }} depth is high"
+          description: >
+            RabbitMQ queue {{ $labels.queue }} has {{ $value }} messages
+            waiting, sustained for 10 minutes. Consumers may be down,
+            slow, or unable to keep up. This can cause experiment
+            execution delays.
+
+      # RabbitMQ connection failures
+      - alert: RabbitMQConnectionFailed
+        expr: |
+          increase(chaos_sec_rabbitmq_connection_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+          component: messaging
+          team: platform
+        annotations:
+          summary: "RabbitMQ connection failures detected"
+          description: >
+            The backend has experienced {{ $value }} RabbitMQ connection
+            errors in the last 5 minutes. Message processing for experiment
+            lifecycle events may be disrupted. Check RabbitMQ health and
+            resource limits.
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Alert Inhibition Rules (metadata for Alertmanager)
+  # These are not Prometheus rules but serve as documentation for routing
+  # ──────────────────────────────────────────────────────────────────────────
+  # - HighCPUUsage should inhibit PodNotReady for the same pod
+  # - BackendDown should inhibit HighErrorRate, HighLatency
+  # - DatabaseConnectionFailed should inhibit HighLatency
+  # - DiskSpaceCritical should inhibit DiskSpaceLow
+  # - SSLExpiryCritical should inhibit SSLExpirySoon
+  # - SSLCertificateExpired should inhibit SSLExpiryCritical

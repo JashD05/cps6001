@@ -1,0 +1,550 @@
+# =============================================================================
+# Chaos-Sec PostgreSQL StatefulSet
+# =============================================================================
+# Production-ready PostgreSQL deployment with:
+# - Persistent storage (10Gi PVC) for data durability
+# - Liveness and readiness probes for automatic health management
+# - Init container for database and user creation
+# - Security-hardened with non-root user, dropped capabilities
+# - Headless Service for stable network identity (chaos-sec-postgres-0, etc.)
+# =============================================================================
+
+# ──────────────────────────────────────────────
+# Headless Service for PostgreSQL
+# ──────────────────────────────────────────────
+# Required for StatefulSet stable network identities.
+# Also used by application pods to discover PostgreSQL replicas.
+apiVersion: v1
+kind: Service
+metadata:
+  name: chaos-sec-postgres
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Headless service for Chaos-Sec PostgreSQL StatefulSet"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9187"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector:
+    app.kubernetes.io/name: chaos-sec-postgres
+    app.kubernetes.io/component: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+      appProtocol: postgresql
+
+---
+# =============================================================================
+# PostgreSQL StatefulSet
+# =============================================================================
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: chaos-sec-postgres
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Chaos-Sec PostgreSQL database – persistent storage with HA potential"
+    contact: "dev@chaos-sec.io"
+spec:
+  serviceName: chaos-sec-postgres
+  replicas: 1
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  podManagementPolicy: OrderedReady
+
+  # ──────────────────────────────────────────────
+  # Update Strategy
+  # ──────────────────────────────────────────────
+  # RollingUpdate for StatefulSets requires care with databases.
+  # OnDelete is safer for production – new pods only start when the
+  # old one is manually deleted after validation.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chaos-sec-postgres
+      app.kubernetes.io/component: database
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chaos-sec-postgres
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: chaos-sec
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+        prometheus.io/path: "/metrics"
+
+    spec:
+      # ──────────────────────────────────────────
+      # Security Context – Pod Level
+      # ──────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+        supplementalGroups:
+          - 999
+
+      # ──────────────────────────────────────────
+      # Init Container: Database Setup
+      # ──────────────────────────────────────────
+      # Waits for PostgreSQL to be ready, then ensures the database
+      # and user exist with the correct permissions. This handles
+      # first-time initialization and idempotent re-creation.
+      initContainers:
+        - name: init-db
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+
+              echo "[init-db] Waiting for PostgreSQL to accept connections..."
+              until pg_isready \
+                -h localhost \
+                -p 5432 \
+                -U "$POSTGRES_USER" \
+                -d "$POSTGRES_DB" \
+                --timeout=5; do
+                echo "[init-db] PostgreSQL not ready yet, retrying in 2s..."
+                sleep 2
+              done
+
+              echo "[init-db] PostgreSQL is accepting connections."
+
+              # Check if the application database exists
+              DB_EXISTS=$(psql \
+                -h localhost \
+                -U "$POSTGRES_USER" \
+                -d "$POSTGRES_DB" \
+                -tAc "SELECT 1 FROM pg_database WHERE datname='$APP_DB_NAME'")
+
+              if [ "$DB_EXISTS" = "1" ]; then
+                echo "[init-db] Database '$APP_DB_NAME' already exists."
+              else
+                echo "[init-db] Creating database '$APP_DB_NAME'..."
+                createdb \
+                  -h localhost \
+                  -U "$POSTGRES_USER" \
+                  "$APP_DB_NAME"
+                echo "[init-db] Database '$APP_DB_NAME' created."
+              fi
+
+              # Ensure the application user exists with correct permissions
+              USER_EXISTS=$(psql \
+                -h localhost \
+                -U "$POSTGRES_USER" \
+                -d "$APP_DB_NAME" \
+                -tAc "SELECT 1 FROM pg_roles WHERE rolname='$APP_DB_USER'")
+
+              if [ "$USER_EXISTS" = "1" ]; then
+                echo "[init-db] User '$APP_DB_USER' already exists, updating password..."
+                psql \
+                  -h localhost \
+                  -U "$POSTGRES_USER" \
+                  -d "$APP_DB_NAME" \
+                  -c "ALTER USER \"$APP_DB_USER\" WITH PASSWORD '$APP_DB_PASSWORD';"
+              else
+                echo "[init-db] Creating user '$APP_DB_USER'..."
+                psql \
+                  -h localhost \
+                  -U "$POSTGRES_USER" \
+                  -d "$APP_DB_NAME" \
+                  -c "CREATE USER \"$APP_DB_USER\" WITH PASSWORD '$APP_DB_PASSWORD';"
+                echo "[init-db] User '$APP_DB_USER' created."
+              fi
+
+              # Grant permissions
+              echo "[init-db] Granting permissions to '$APP_DB_USER' on '$APP_DB_NAME'..."
+              psql \
+                -h localhost \
+                -U "$POSTGRES_USER" \
+                -d "$APP_DB_NAME" \
+                -c "GRANT ALL PRIVILEGES ON DATABASE \"$APP_DB_NAME\" TO \"$APP_DB_USER\";"
+              psql \
+                -h localhost \
+                -U "$POSTGRES_USER" \
+                -d "$APP_DB_NAME" \
+                -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"$APP_DB_USER\";"
+              psql \
+                -h localhost \
+                -U "$POSTGRES_USER" \
+                -d "$APP_DB_NAME" \
+                -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"$APP_DB_USER\";"
+              psql \
+                -h localhost \
+                -U "$POSTGRES_USER" \
+                -d "$APP_DB_NAME" \
+                -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"$APP_DB_USER\";"
+              psql \
+                -h localhost \
+                -U "$POSTGRES_USER" \
+                -d "$APP_DB_NAME" \
+                -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"$APP_DB_USER\";"
+
+              echo "[init-db] Database initialization complete."
+
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: DATABASE_PASSWORD
+                  # Using the postgres superuser name from POSTGRES_USER env
+                  # In practice, this is set via the main container env
+            - name: POSTGRES_DB
+              value: "chaossec"
+            - name: PGHOST
+              value: "localhost"
+            - name: PGPORT
+              value: "5432"
+            - name: APP_DB_NAME
+              value: "chaossec"
+            - name: APP_DB_USER
+              value: "chaossec_admin"
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: DATABASE_PASSWORD
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: DATABASE_PASSWORD
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+              subPath: data
+            - name: tmp-volume
+              mountPath: /tmp
+
+      # ──────────────────────────────────────────
+      # Main Container: PostgreSQL
+      # ──────────────────────────────────────────
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+
+          # ──────────────────────────────────────
+          # Ports
+          # ──────────────────────────────────────
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+
+          # ──────────────────────────────────────
+          # Environment Variables
+          # ──────────────────────────────────────
+          env:
+            # PostgreSQL superuser database (created on first start)
+            - name: POSTGRES_DB
+              value: "chaossec"
+            # PostgreSQL superuser name
+            - name: POSTGRES_USER
+              value: "chaossec_admin"
+            # PostgreSQL superuser password – from Secrets
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chaos-sec-secrets
+                  key: DATABASE_PASSWORD
+            # Data directory (matches the volume mount)
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+            # Performance tuning
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+            # Maximum connections – aligns with CHAOS_DB_MAX_OPEN_CONNS
+            - name: POSTGRES_MAX_CONNECTIONS
+              value: "100"
+
+          # ──────────────────────────────────────
+          # Resource Limits
+          # ──────────────────────────────────────
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+          # ──────────────────────────────────────
+          # Liveness Probe
+          # ──────────────────────────────────────
+          # Checks if PostgreSQL is alive and accepting connections.
+          # Failure triggers a pod restart.
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  exec pg_isready \
+                    -h 127.0.0.1 \
+                    -p 5432 \
+                    -U chaossec_admin \
+                    -d chaossec \
+                    --timeout=5
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # ──────────────────────────────────────
+          # Readiness Probe
+          # ──────────────────────────────────────
+          # Checks if PostgreSQL is ready to serve queries.
+          # Verifies the database is accessible and not in recovery.
+          # Failure removes the pod from service endpoints.
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Check that PostgreSQL is ready
+                  pg_isready \
+                    -h 127.0.0.1 \
+                    -p 5432 \
+                    -U chaossec_admin \
+                    -d chaossec \
+                    --timeout=5 || exit 1
+
+                  # Check that the database is not in recovery (not a standby)
+                  RECOVERY=$(psql \
+                    -h 127.0.0.1 \
+                    -U chaossec_admin \
+                    -d chaossec \
+                    -tAc "SELECT pg_is_in_recovery();")
+
+                  if [ "$RECOVERY" = "t" ]; then
+                    echo "Database is in recovery mode, not ready"
+                    exit 1
+                  fi
+
+                  # Check that we can actually run a query
+                  psql \
+                    -h 127.0.0.1 \
+                    -U chaossec_admin \
+                    -d chaossec \
+                    -c "SELECT 1;" > /dev/null 2>&1 || exit 1
+
+                  exit 0
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # ──────────────────────────────────────
+          # Startup Probe
+          # ──────────────────────────────────────
+          # Gives PostgreSQL time to perform crash recovery or
+          # initial data directory setup before liveness kicks in.
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  exec pg_isready \
+                    -h 127.0.0.1 \
+                    -p 5432 \
+                    -U chaossec_admin \
+                    -d chaossec \
+                    --timeout=5
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+
+          # ──────────────────────────────────────
+          # Container Security Context
+          # ──────────────────────────────────────
+          # PostgreSQL in Alpine runs as the 'postgres' user (UID 999).
+          # Note: readOnlyRootFilesystem cannot be true for PostgreSQL
+          # because it needs to write to /var/lib/postgresql/data,
+          # /var/run/postgresql, and /tmp.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+          # ──────────────────────────────────────
+          # Volume Mounts
+          # ──────────────────────────────────────
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+              subPath: data
+            - name: postgres-run
+              mountPath: /var/run/postgresql
+            - name: tmp-volume
+              mountPath: /tmp
+
+          # ──────────────────────────────────────
+          # Lifecycle Hooks
+          # ──────────────────────────────────────
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    # Allow existing queries to finish gracefully before shutdown
+                    # Fast shutdown: wait for active connections to finish, then exit
+                    pg_ctl -D /var/lib/postgresql/data/pgdata -m fast stop
+
+      # ──────────────────────────────────────────
+      # Sidecar: PostgreSQL Exporter (Prometheus)
+      # ──────────────────────────────────────────
+      # Optional metrics exporter for monitoring PostgreSQL performance.
+      # Disabled by default – uncomment and configure for production monitoring.
+        # - name: postgres-exporter
+        #   image: prometheuscommunity/postgres-exporter:v0.15.0
+        #   imagePullPolicy: IfNotPresent
+        #   ports:
+        #     - name: metrics
+        #       containerPort: 9187
+        #       protocol: TCP
+        #   env:
+        #     - name: DATA_SOURCE_NAME
+        #       value: "postgresql://chaossec_admin:$(DATABASE_PASSWORD)@localhost:5432/chaossec?sslmode=disable"
+        #     - name: PG_EXPORTER_DISABLE_DEFAULT_METRICS
+        #       value: "false"
+        #     - name: PG_EXPORTER_DISABLE_SETTINGS_METRICS
+        #       value: "false"
+        #   resources:
+        #     requests:
+        #       cpu: 50m
+        #       memory: 32Mi
+        #     limits:
+        #       cpu: 100m
+        #       memory: 64Mi
+        #   securityContext:
+        #     runAsNonRoot: true
+        #     runAsUser: 9187
+        #     runAsGroup: 9187
+        #     allowPrivilegeEscalation: false
+        #     readOnlyRootFilesystem: true
+        #     capabilities:
+        #       drop:
+        #         - ALL
+
+      # ──────────────────────────────────────────
+      # Volumes
+      # ──────────────────────────────────────────
+      volumes:
+        # Runtime socket directory
+        - name: postgres-run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi
+
+        # Temporary directory for PostgreSQL operations
+        - name: tmp-volume
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+
+      # ──────────────────────────────────────────
+      # Pod Lifecycle & Scheduling
+      # ──────────────────────────────────────────
+      terminationGracePeriodSeconds: 60
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      serviceAccountName: chaos-sec-postgres
+      automountServiceAccountToken: false
+
+      # ──────────────────────────────────────────
+      # Topology Spread Constraints
+      # ──────────────────────────────────────────
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: chaos-sec-postgres
+
+  # ──────────────────────────────────────────────
+  # Volume Claim Template
+  # ──────────────────────────────────────────────
+  # Persistent storage for PostgreSQL data.
+  # Uses the default StorageClass (gp3 on EKS, standard on GKE).
+  # For production, consider:
+  #   - gp3 (AWS EBS) or premium-ssd (GCE) for performance
+  #   - Volume snapshots for backup
+  #   - WAL archiving to S3/GCS for point-in-time recovery
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+        labels:
+          app.kubernetes.io/name: chaos-sec-postgres
+          app.kubernetes.io/component: database
+          app.kubernetes.io/part-of: chaos-sec
+        annotations:
+          description: "Persistent storage for Chaos-Sec PostgreSQL data"
+          # Enable volume snapshot for backup
+          # backup.velero.io/backup-volumes: "postgres-data"
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 10Gi

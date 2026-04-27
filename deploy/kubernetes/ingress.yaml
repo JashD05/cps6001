@@ -1,0 +1,207 @@
+# =============================================================================
+# Chaos-Sec Ingress
+# =============================================================================
+# Production-ready ingress with TLS termination for the Chaos-Sec platform.
+# - Routes /api/* and /ws to the backend API service
+# - Routes /* to the frontend Nginx service
+# - TLS enabled with certificate from chaos-sec-tls Secret
+# - Security headers and rate limiting via annotations
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chaos-sec-ingress
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-ingress
+    app.kubernetes.io/component: ingress
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    # ──────────────────────────────────────────────
+    # Nginx Ingress Controller Annotations
+    # ──────────────────────────────────────────────
+    nginx.ingress.kubernetes.io/rewrite-target: /
+
+    # Use nginx ingress class
+    kubernetes.io/ingress.class: nginx
+
+    # TLS configuration
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-passthrough: "false"
+
+    # Backend WebSocket support
+    nginx.ingress.kubernetes.io/websocket-services: "chaos-sec-backend"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+    # Backend long-running request support (chaos experiments)
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "8k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
+
+    # Request body size limit
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: SAMEORIGIN";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Permissions-Policy: camera=(), microphone=(), geolocation=()";
+      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
+
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+
+    # CORS configuration for the API
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, X-Request-ID"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://chaos-sec.io"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+
+    # Client certificate authentication (optional – enable for mTLS)
+    # nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    # nginx.ingress.kubernetes.io/auth-tls-secret: "chaos-sec/ca-secret"
+    # nginx.ingress.kubernetes.io/auth-tls-verify-depth: "1"
+
+    # Custom error pages
+    nginx.ingress.kubernetes.io/custom-http-errors: "404,502,503,504"
+    nginx.ingress.kubernetes.io/default-backend: "chaos-sec-frontend"
+
+    # Affinity – stick sessions to the same backend pod
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/affinity-mode: "balanced"
+    nginx.ingress.kubernetes.io/session-cookie-name: "CHAOSSEC_INGRESS"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "86400"
+    nginx.ingress.kubernetes.io/session-cookie-secure: "true"
+    nginx.ingress.kubernetes.io/session-cookie-samesite: "Lax"
+    nginx.ingress.kubernetes.io/session-cookie-change-on-failure: "true"
+
+    # Use regex for path matching
+    nginx.ingress.kubernetes.io/use-regex: "true"
+
+    description: "Chaos-Sec platform ingress – TLS termination and path-based routing"
+    contact: "dev@chaos-sec.io"
+spec:
+  # ──────────────────────────────────────────────
+  # Ingress Class
+  # ──────────────────────────────────────────────
+  ingressClassName: nginx
+
+  # ──────────────────────────────────────────────
+  # TLS Configuration
+  # ──────────────────────────────────────────────
+  # Certificate and key are stored in the chaos-sec-tls Secret.
+  # Provision via cert-manager or manually.
+  tls:
+    - hosts:
+        - chaos-sec.io
+        - app.chaos-sec.io
+      secretName: chaos-sec-tls
+
+  # ──────────────────────────────────────────────
+  # Routing Rules
+  # ──────────────────────────────────────────────
+  rules:
+    # ──────────────────────────────────────────
+    # Primary domain
+    # ──────────────────────────────────────────
+    - host: chaos-sec.io
+      http:
+        paths:
+          # ────────────────────────────────────
+          # API routes → Backend
+          # ────────────────────────────────────
+          # Matches /api/v1/* and all sub-paths
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: chaos-sec-backend
+                port:
+                  number: 8080
+
+          # ────────────────────────────────────
+          # WebSocket route → Backend
+          # ────────────────────────────────────
+          # Matches /ws and all sub-paths
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: chaos-sec-backend
+                port:
+                  number: 8080
+
+          # ────────────────────────────────────
+          # Health check route → Backend
+          # ────────────────────────────────────
+          # Exposes backend health endpoints for
+          # external monitoring and load balancers
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: chaos-sec-backend
+                port:
+                  number: 8080
+
+          # ────────────────────────────────────
+          # Default route → Frontend
+          # ────────────────────────────────────
+          # Catches all other paths and serves
+          # the React SPA. Client-side routing
+          # is handled by the SPA fallback in Nginx.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chaos-sec-frontend
+                port:
+                  number: 80
+
+    # ──────────────────────────────────────────
+    # Alternate domain (app subdomain)
+    # ──────────────────────────────────────────
+    - host: app.chaos-sec.io
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: chaos-sec-backend
+                port:
+                  number: 8080
+
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: chaos-sec-backend
+                port:
+                  number: 8080
+
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: chaos-sec-backend
+                port:
+                  number: 8080
+
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chaos-sec-frontend
+                port:
+                  number: 80

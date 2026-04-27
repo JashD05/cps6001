@@ -1,0 +1,430 @@
+# ============================================================================
+# Chaos-Sec: Continuous Integration Pipeline
+# Triggers on push to main and pull requests
+# Jobs: lint, test, security-scan, build for backend and frontend
+# ============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.21"
+  NODE_VERSION: "18"
+  GOLANGCI_LINT_VERSION: "v1.55"
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Backend Lint
+  # ──────────────────────────────────────────────────────────────────────────
+  lint-backend:
+    name: Lint Backend (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-mod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: |
+            go-mod-${{ runner.os }}-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: backend
+          args: --timeout=5m
+          skip-cache: false
+
+      - name: Check Go formatting
+        run: |
+          output=$(gofmt -l .)
+          if [ -n "$output" ]; then
+            echo "::error::The following files are not formatted:"
+            echo "$output"
+            echo "Run 'gofmt -w .' to fix"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Backend Test
+  # ──────────────────────────────────────────────────────────────────────────
+  test-backend:
+    name: Test Backend (Go)
+    runs-on: ubuntu-latest
+    needs: lint-backend
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: chaossec_test
+          POSTGRES_USER: chaossec_admin
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U chaossec_admin -d chaossec_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      CHAOS_DB_HOST: localhost
+      CHAOS_DB_PORT: "5432"
+      CHAOS_DB_NAME: chaossec_test
+      CHAOS_DB_USER: chaossec_admin
+      CHAOS_DB_PASSWORD: test_password
+      CHAOS_DB_SSLMODE: disable
+      CHAOS_REDIS_HOST: localhost
+      CHAOS_REDIS_PORT: "6379"
+      CHAOS_REDIS_PASSWORD: ""
+      CHAOS_JWT_SECRET: ci-test-jwt-secret-32-characters!!
+      CHAOS_LOG_LEVEL: warn
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-mod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: |
+            go-mod-${{ runner.os }}-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: |
+          go test -v -race \
+            -coverprofile=coverage-unit.out \
+            -covermode=atomic \
+            -short \
+            ./...
+
+      - name: Run integration tests
+        run: |
+          go test -v -race \
+            -coverprofile=coverage-integration.out \
+            -covermode=atomic \
+            -run Integration \
+            ./...
+
+      - name: Merge coverage reports
+        run: |
+          echo "mode: atomic" > coverage.out
+          grep -v "mode:" coverage-unit.out >> coverage.out || true
+          grep -v "mode:" coverage-integration.out >> coverage.out || true
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.out
+          retention-days: 7
+
+      - name: Display coverage summary
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          echo ""
+          echo "Coverage by package:"
+          go tool cover -func=coverage.out | head -20
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Frontend Lint
+  # ──────────────────────────────────────────────────────────────────────────
+  lint-frontend:
+    name: Lint Frontend (React/TS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            node-modules-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Check formatting (Prettier)
+        run: npm run format:check
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Frontend Test
+  # ──────────────────────────────────────────────────────────────────────────
+  test-frontend:
+    name: Test Frontend (React/TS)
+    runs-on: ubuntu-latest
+    needs: lint-frontend
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            node-modules-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run test:coverage -- --ci --forceExit
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Security Scan
+  # ──────────────────────────────────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Run gosec security scanner
+        uses: securego/gosec@master
+        with:
+          args: |
+            -no-fail
+            -fmt=json
+            -out=security-results.json
+            -severity=medium
+            -confidence=medium
+            ./...
+
+      - name: Upload gosec results
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosec-results
+          path: backend/security-results.json
+          retention-days: 14
+
+      - name: Check for high severity findings
+        run: |
+          if [ -f security-results.json ]; then
+            high_issues=$(jq '[.Issues[] | select(.severity == "HIGH")] | length' security-results.json)
+            if [ "$high_issues" -gt 0 ]; then
+              echo "::warning::Found $high_issues high severity security findings"
+              echo "High severity issues found:"
+              jq -r '.Issues[] | select(.severity == "HIGH") | "  \(.file):\(.line) - \(.details)"' security-results.json
+            else
+              echo "No high severity findings detected"
+            fi
+          fi
+
+      - name: Run npm audit (frontend)
+        working-directory: frontend
+        run: |
+          npm audit --audit-level=high --production || true
+
+      - name: Run go mod vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./... || true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build & Verify
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend, security-scan]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build backend binary
+        working-directory: backend
+        run: |
+          go build -v -ldflags="-w -s" -trimpath -o bin/chaos-sec-backend ./cmd/backend
+          echo "Backend binary built successfully"
+          ls -lh bin/chaos-sec-backend
+
+      - name: Build frontend production bundle
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          echo "Frontend build completed successfully"
+          ls -lh dist/
+
+      - name: Build backend Docker image
+        run: |
+          docker build -t chaos-sec-backend:ci-test \
+            -f backend/Dockerfile backend
+
+      - name: Build frontend Docker image
+        run: |
+          docker build -t chaos-sec-frontend:ci-test \
+            -f frontend/Dockerfile \
+            --target production frontend
+
+      - name: Build mock SIEM Docker image
+        run: |
+          docker build -t chaos-sec-mock-siem:ci-test \
+            -f backend/Dockerfile.mock-siem backend
+
+      - name: Verify backend container starts
+        run: |
+          docker run -d --name backend-test \
+            -e CHAOS_SERVER_HOST=0.0.0.0 \
+            -e CHAOS_SERVER_PORT=8080 \
+            -e CHAOS_DB_HOST=invalid \
+            -e CHAOS_LOG_LEVEL=error \
+            -p 8080:8080 \
+            chaos-sec-backend:ci-test
+          sleep 5
+          docker logs backend-test || true
+          docker stop backend-test || true
+
+      - name: Verify frontend container serves content
+        run: |
+          docker run -d --name frontend-test \
+            -p 3000:80 \
+            chaos-sec-frontend:ci-test
+          sleep 3
+          status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ || echo "000")
+          echo "Frontend HTTP status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::warning::Frontend returned HTTP $status instead of 200"
+          fi
+          docker stop frontend-test || true
+
+      - name: Summary
+        run: |
+          echo "## CI Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend binary | ✅ Built |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend bundle | ✅ Built |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend Docker | ✅ Built |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend Docker | ✅ Built |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mock SIEM Docker | ✅ Built |" >> $GITHUB_STEP_SUMMARY

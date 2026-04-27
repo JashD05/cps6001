@@ -1,0 +1,31 @@
+# =============================================================================
+# Chaos-Sec Platform Namespace
+# =============================================================================
+# Isolates all Chaos-Sec resources within the cluster for security,
+# resource quotas, and network policy enforcement.
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: chaos-sec-team
+    # Pod Security Standard enforcement via namespace labels
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.28
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.28
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.28
+  annotations:
+    scheduler.alpha.kubernetes.io/defaultTolerations: '[{"operator": "Equal", "effect": "NoSchedule", "key": "dedicated", "value": "chaos-sec"}]'
+    description: "Chaos-Sec security chaos engineering platform - production namespace"
+    contact: "dev@chaos-sec.io"
+    docs: "https://docs.chaos-sec.io"
+spec:
+  finalizers:
+    - kubernetes

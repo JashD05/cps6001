@@ -1,0 +1,348 @@
+# =============================================================================
+# Chaos-Sec Platform ConfigMap
+# =============================================================================
+# Centralizes all non-sensitive configuration for the Chaos-Sec platform.
+# Sensitive values (passwords, API keys, secrets) are stored in the
+# chaos-sec-secrets Secret and must NOT be placed here.
+#
+# NOTE: Update values to match your production environment before deploying.
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-sec-config
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-config
+    app.kubernetes.io/component: configuration
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Non-sensitive configuration for the Chaos-Sec platform"
+    contact: "dev@chaos-sec.io"
+data:
+
+  # ──────────────────────────────────────────────
+  # Server Configuration
+  # ──────────────────────────────────────────────
+  CHAOS_SERVER_HOST: "0.0.0.0"
+  CHAOS_SERVER_PORT: "8080"
+  CHAOS_SERVER_READ_TIMEOUT: "15s"
+  CHAOS_SERVER_WRITE_TIMEOUT: "15s"
+  CHAOS_SERVER_IDLE_TIMEOUT: "60s"
+
+  # ──────────────────────────────────────────────
+  # Database Configuration (PostgreSQL)
+  # ──────────────────────────────────────────────
+  # Host references the PostgreSQL StatefulSet service
+  DATABASE_HOST: "chaos-sec-postgres.chaos-sec.svc.cluster.local"
+  CHAOS_DB_HOST: "chaos-sec-postgres.chaos-sec.svc.cluster.local"
+  CHAOS_DB_PORT: "5432"
+  CHAOS_DB_NAME: "chaossec"
+  CHAOS_DB_USER: "chaossec_admin"
+  # CHAOS_DB_PASSWORD is stored in the chaos-sec-secrets Secret
+  CHAOS_DB_SSLMODE: "require"
+  CHAOS_DB_MAX_OPEN_CONNS: "50"
+  CHAOS_DB_MAX_IDLE_CONNS: "10"
+  CHAOS_DB_CONN_MAX_LIFETIME: "5m"
+  CHAOS_DB_CONN_MAX_IDLE_TIME: "1m"
+  CHAOS_DB_MIGRATIONS_PATH: "file:///app/migrations"
+
+  # ──────────────────────────────────────────────
+  # Redis Configuration
+  # ──────────────────────────────────────────────
+  # Host references the Redis StatefulSet service
+  CHAOS_REDIS_HOST: "chaos-sec-redis.chaos-sec.svc.cluster.local"
+  CHAOS_REDIS_PORT: "6379"
+  CHAOS_REDIS_DB: "0"
+  # CHAOS_REDIS_PASSWORD is stored in the chaos-sec-secrets Secret
+
+  # ──────────────────────────────────────────────
+  # JWT Configuration
+  # ──────────────────────────────────────────────
+  # CHAOS_JWT_SECRET is stored in the chaos-sec-secrets Secret
+  CHAOS_JWT_EXPIRY: "1h"
+  CHAOS_JWT_REFRESH_EXPIRY: "168h"
+  CHAOS_JWT_ISSUER: "chaos-sec"
+
+  # ──────────────────────────────────────────────
+  # SIEM Integration Configuration
+  # ──────────────────────────────────────────────
+  CHAOS_SIEM_ENABLED: "true"
+  CHAOS_SIEM_PROVIDER: "splunk"
+  CHAOS_SIEM_ENDPOINT: "https://siem.chaos-sec.internal:8089"
+  # CHAOS_SIEM_API_KEY is stored in the chaos-sec-secrets Secret
+
+  # ──────────────────────────────────────────────
+  # Kubernetes Integration Configuration
+  # ──────────────────────────────────────────────
+  # CHAOS_K8S_IN_CLUSTER is set to "true" via the Deployment manifest
+  # CHAOS_K8S_NAMESPACE is set via downward API in the Deployment manifest
+  CHAOS_K8S_POD_TIMEOUT: "600s"
+  CHAOS_K8S_MAX_CONCURRENT: "5"
+
+  # ──────────────────────────────────────────────
+  # Rate Limiting Configuration
+  # ──────────────────────────────────────────────
+  CHAOS_RATE_LIMIT_ENABLED: "true"
+  CHAOS_RATE_LIMIT_REQUESTS: "100"
+  CHAOS_RATE_LIMIT_WINDOW: "60s"
+
+  # ──────────────────────────────────────────────
+  # Logging Configuration
+  # ──────────────────────────────────────────────
+  LOG_LEVEL: "info"
+  CHAOS_LOG_LEVEL: "info"
+  CHAOS_LOG_FORMAT: "json"
+
+  # ──────────────────────────────────────────────
+  # Frontend / Nginx Proxy Configuration
+  # ──────────────────────────────────────────────
+  # These values configure the Nginx upstream proxy target
+  # for the frontend deployment's nginx.conf.
+  BACKEND_SERVICE_HOST: "chaos-sec-backend.chaos-sec.svc.cluster.local"
+  BACKEND_SERVICE_PORT: "8080"
+
+  # ──────────────────────────────────────────────
+  # Application Environment
+  # ──────────────────────────────────────────────
+  APP_ENV: "production"
+  NODE_ENV: "production"
+
+---
+# =============================================================================
+# Chaos-Sec Nginx Configuration ConfigMap
+# =============================================================================
+# Stores the Nginx configuration for the frontend service.
+# This is mounted into the frontend pod at /etc/nginx/conf.d/default.conf.
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-sec-nginx-config
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-nginx-config
+    app.kubernetes.io/component: configuration
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Nginx configuration for the Chaos-Sec frontend service"
+data:
+  nginx.conf: |
+    # ========================================================================
+    # Chaos-Sec Frontend Nginx Configuration (Kubernetes Production)
+    # Serves the React SPA, proxies API/WebSocket to backend service
+    # ========================================================================
+
+    # Upstream definitions for backend services (Kubernetes DNS)
+    upstream backend_api {
+        server chaos-sec-backend.chaos-sec.svc.cluster.local:8080;
+        keepalive 32;
+    }
+
+    upstream backend_ws {
+        server chaos-sec-backend.chaos-sec.svc.cluster.local:8080;
+        keepalive 16;
+    }
+
+    # ------------------------------------------------------------------------
+    # Main server block
+    # ------------------------------------------------------------------------
+    server {
+        listen 80;
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        charset utf-8;
+
+        # ----------------------------------------------------------------
+        # Security Headers
+        # ----------------------------------------------------------------
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+        # ----------------------------------------------------------------
+        # Gzip Compression
+        # ----------------------------------------------------------------
+        gzip on;
+        gzip_vary on;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_min_length 256;
+        gzip_types
+            text/plain
+            text/css
+            text/xml
+            text/javascript
+            application/javascript
+            application/x-javascript
+            application/json
+            application/xml
+            application/rss+xml
+            application/atom+xml
+            image/svg+xml
+            font/woff
+            font/woff2
+            font/ttf
+            font/opentype;
+
+        # ----------------------------------------------------------------
+        # API Proxy – forward /api to the backend service
+        # ----------------------------------------------------------------
+        location /api/ {
+            proxy_pass http://backend_api/api/;
+            proxy_http_version 1.1;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Timeout tuning for long-running experiment requests
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 120s;
+
+            # Buffer settings
+            proxy_buffering on;
+            proxy_buffer_size 4k;
+            proxy_buffers 8 4k;
+        }
+
+        # ----------------------------------------------------------------
+        # WebSocket Proxy – forward /ws to the backend WebSocket
+        # ----------------------------------------------------------------
+        location /ws {
+            proxy_pass http://backend_ws/ws;
+            proxy_http_version 1.1;
+
+            # Required for WebSocket upgrade
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Longer timeouts for persistent WebSocket connections
+            proxy_connect_timeout 7d;
+            proxy_send_timeout 7d;
+            proxy_read_timeout 7d;
+
+            # Disable buffering for real-time data
+            proxy_buffering off;
+        }
+
+        # ----------------------------------------------------------------
+        # Static asset caching – hashed JS/CSS bundles
+        # ----------------------------------------------------------------
+        location /assets/ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+            access_log off;
+
+            try_files $uri =404;
+        }
+
+        # ----------------------------------------------------------------
+        # Service worker – must not be cached
+        # ----------------------------------------------------------------
+        location = /sw.js {
+            expires off;
+            add_header Cache-Control "no-cache, no-store, must-revalidate";
+            add_header Pragma "no-cache";
+
+            try_files $uri =404;
+        }
+
+        # ----------------------------------------------------------------
+        # Health check endpoint (returns 200 directly from nginx)
+        # ----------------------------------------------------------------
+        location = /nginx-health {
+            access_log off;
+            return 200 "ok\n";
+            add_header Content-Type text/plain;
+        }
+
+        # ----------------------------------------------------------------
+        # SPA Fallback – serve index.html for all client-side routes
+        # ----------------------------------------------------------------
+        location / {
+            try_files $uri $uri/ /index.html;
+
+            # Disable caching for the HTML shell (always fetch latest)
+            expires -1;
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        # ----------------------------------------------------------------
+        # Block access to hidden files (e.g. .env, .git)
+        # ----------------------------------------------------------------
+        location ~ /\. {
+            deny all;
+            access_log off;
+            log_not_found off;
+        }
+
+        # ----------------------------------------------------------------
+        # Block access to source maps in production
+        # ----------------------------------------------------------------
+        location ~* \.map$ {
+            deny all;
+            access_log off;
+            log_not_found off;
+        }
+
+        # ----------------------------------------------------------------
+        # Error pages
+        # ----------------------------------------------------------------
+        error_page 404 /index.html;
+        error_page 500 502 503 504 /50x.html;
+
+        location = /50x.html {
+            root /usr/share/nginx/html;
+            internal;
+        }
+    }
+
+---
+# =============================================================================
+# Chaos-Sec Database Migrations ConfigMap
+# =============================================================================
+# Stores SQL migration files that are mounted into the backend and
+# init containers for database schema management.
+#
+# NOTE: In production, consider using a dedicated migration tool
+# (e.g., golang-migrate, Flyway, or Liquibase) with migrations
+# bundled into the container image instead of a ConfigMap.
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-sec-migrations
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-migrations
+    app.kubernetes.io/component: configuration
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Database migration files for the Chaos-Sec platform"
+data:
+  # Placeholder – in production, migration files are bundled into the
+  # backend container image at /app/migrations. This ConfigMap is
+  # referenced as a volume mount but the actual migrations should
+  # come from the image. If you need to override migrations at deploy
+  # time, add the SQL files here as keys.

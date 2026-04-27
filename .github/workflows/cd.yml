@@ -1,0 +1,540 @@
+# ============================================================================
+# Chaos-Sec: Continuous Deployment Pipeline
+# Triggers on release tags, builds Docker images, pushes to registries,
+# deploys to Kubernetes, runs smoke tests, and supports rollback
+# ============================================================================
+
+name: CD
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY_DOCKERHUB: docker.io
+  REGISTRY_GHCR: ghcr.io
+  IMAGE_PREFIX: chaos-sec
+  K8S_NAMESPACE: chaos-sec
+  K8S_DEPLOYMENT_BACKEND: chaos-sec-backend
+  K8S_DEPLOYMENT_FRONTEND: chaos-sec-frontend
+  K8S_DEPLOYMENT_SIEM: chaos-sec-mock-siem
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Determine Version
+  # ──────────────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare Release Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+      is_release: ${{ steps.version.outputs.is_release }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            IS_RELEASE="true"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+            IS_RELEASE="false"
+          fi
+          # Strip leading 'v' if present for image tags
+          TAG="${VERSION#v}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "is_release=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          echo "## Deployment Metadata" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | ${VERSION} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | ${SHORT_SHA} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Is Release | ${IS_RELEASE} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag | ${TAG} |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build & Push Backend Image
+  # ──────────────────────────────────────────────────────────────────────────
+  build-backend:
+    name: Build & Push Backend Image
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_DOCKERHUB }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_GHCR }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_PREFIX }}-backend
+            ${{ env.REGISTRY_GHCR }}/${{ github.repository_owner }}/${{ env.IMAGE_PREFIX }}-backend
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ needs.prepare.outputs.short_sha }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build & Push Frontend Image
+  # ──────────────────────────────────────────────────────────────────────────
+  build-frontend:
+    name: Build & Push Frontend Image
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_DOCKERHUB }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_GHCR }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_PREFIX }}-frontend
+            ${{ env.REGISTRY_GHCR }}/${{ github.repository_owner }}/${{ env.IMAGE_PREFIX }}-frontend
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ needs.prepare.outputs.short_sha }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          target: production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build & Push Mock SIEM Image
+  # ──────────────────────────────────────────────────────────────────────────
+  build-mock-siem:
+    name: Build & Push Mock SIEM Image
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_DOCKERHUB }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_GHCR }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY_DOCKERHUB }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_PREFIX }}-mock-siem
+            ${{ env.REGISTRY_GHCR }}/${{ github.repository_owner }}/${{ env.IMAGE_PREFIX }}-mock-siem
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ needs.prepare.outputs.outputs.short_sha }}
+
+      - name: Build and push mock SIEM image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.mock-siem
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Deploy to Kubernetes
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: [prepare, build-backend, build-frontend, build-mock-siem]
+    if: needs.prepare.outputs.is_release == 'true' || github.ref =~ '^refs/tags/v'
+
+    environment:
+      name: production
+      url: https://chaos-sec.example.com
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p "${HOME}/.kube"
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Verify cluster connectivity
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply Kubernetes secrets
+        run: |
+          # Create or update secrets from GitHub Secrets
+          kubectl create secret generic chaos-sec-secrets \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --from-literal=jwt-secret="${{ secrets.JWT_SECRET }}" \
+            --from-literal=db-password="${{ secrets.DB_PASSWORD }}" \
+            --from-literal=redis-password="${{ secrets.REDIS_PASSWORD }}" \
+            --from-literal=rabbitmq-password="${{ secrets.RABBITMQ_PASSWORD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create image pull secret
+        run: |
+          kubectl create secret docker-registry chaos-sec-registry \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --docker-server=${{ env.REGISTRY_GHCR }} \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            --docker-email=${{ secrets.DOCKERHUB_EMAIL }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Set deployment image tags
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          GHCR_REGISTRY="${{ env.REGISTRY_GHCR }}/${{ github.repository_owner }}"
+
+          # Backend
+          kubectl set image deployment/${{ env.K8S_DEPLOYMENT_BACKEND }} \
+            backend=${GHCR_REGISTRY}/${{ env.IMAGE_PREFIX }}-backend:${TAG} \
+            --namespace=${{ env.K8S_NAMESPACE }}
+
+          # Frontend
+          kubectl set image deployment/${{ env.K8S_DEPLOYMENT_FRONTEND }} \
+            frontend=${GHCR_REGISTRY}/${{ env.IMAGE_PREFIX }}-frontend:${TAG} \
+            --namespace=${{ env.K8S_NAMESPACE }}
+
+          # Mock SIEM
+          kubectl set image deployment/${{ env.K8S_DEPLOYMENT_SIEM }} \
+            mock-siem=${GHCR_REGISTRY}/${{ env.IMAGE_PREFIX }}-mock-siem:${TAG} \
+            --namespace=${{ env.K8S_NAMESPACE }}
+
+      - name: Record previous deployment state
+        id: previous-revision
+        run: |
+          # Capture current deployment revisions for rollback
+          echo "backend-revision=$(kubectl get deployment ${{ env.K8S_DEPLOYMENT_BACKEND }} -n ${{ env.K8S_NAMESPACE }} -o jsonpath='{.metadata.generation}')" >> "$GITHUB_OUTPUT"
+          echo "frontend-revision=$(kubectl get deployment ${{ env.K8S_DEPLOYMENT_FRONTEND }} -n ${{ env.K8S_NAMESPACE }} -o jsonpath='{.metadata.generation}')" >> "$GITHUB_OUTPUT"
+          echo "siem-revision=$(kubectl get deployment ${{ env.K8S_DEPLOYMENT_SIEM }} -n ${{ env.K8S_NAMESPACE }} -o jsonpath='{.metadata.generation}')" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for rollout
+        run: |
+          echo "Waiting for backend rollout..."
+          kubectl rollout status deployment/${{ env.K8S_DEPLOYMENT_BACKEND }} \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --timeout=300s
+
+          echo "Waiting for frontend rollout..."
+          kubectl rollout status deployment/${{ env.K8S_DEPLOYMENT_FRONTEND }} \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --timeout=300s
+
+          echo "Waiting for mock SIEM rollout..."
+          kubectl rollout status deployment/${{ env.K8S_DEPLOYMENT_SIEM }} \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --timeout=300s
+
+      - name: Verify deployment
+        id: verify
+        run: |
+          echo "Checking pod status..."
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }} -l app.kubernetes.io/part-of=chaos-sec
+
+          echo "Checking deployment status..."
+          BACKEND_READY=$(kubectl get deployment ${{ env.K8S_DEPLOYMENT_BACKEND }} -n ${{ env.K8S_NAMESPACE }} -o jsonpath='{.status.readyReplicas}')
+          FRONTEND_READY=$(kubectl get deployment ${{ env.K8S_DEPLOYMENT_FRONTEND }} -n ${{ env.K8S_NAMESPACE }} -o jsonpath='{.status.readyReplicas}')
+          SIEM_READY=$(kubectl get deployment ${{ env.K8S_DEPLOYMENT_SIEM }} -n ${{ env.K8S_NAMESPACE }} -o jsonpath='{.status.readyReplicas}')
+
+          echo "Backend replicas ready: ${BACKEND_READY:-0}"
+          echo "Frontend replicas ready: ${FRONTEND_READY:-0}"
+          echo "SIEM replicas ready: ${SIEM_READY:-0}"
+
+          if [[ "${BACKEND_READY:-0}" == "0" ]] || [[ "${FRONTEND_READY:-0}" == "0" ]] || [[ "${SIEM_READY:-0}" == "0" ]]; then
+            echo "::error::One or more deployments have no ready replicas"
+            echo "deploy_failed=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Download smoke test script
+        run: |
+          chmod +x deploy/scripts/smoke-tests.sh
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Smoke Tests
+  # ──────────────────────────────────────────────────────────────────────────
+  smoke-tests:
+    name: Run Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p "${HOME}/.kube"
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Get service URLs
+        id: endpoints
+        run: |
+          # Retrieve service endpoints from Kubernetes
+          BACKEND_URL=$(kubectl get svc ${{ env.K8S_DEPLOYMENT_BACKEND }} \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+
+          if [[ -z "$BACKEND_URL" ]]; then
+            # Fallback to configured URL
+            BACKEND_URL="${{ secrets.BACKEND_URL }}"
+          fi
+
+          FRONTEND_URL=$(kubectl get svc ${{ env.K8S_DEPLOYMENT_FRONTEND }} \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+
+          if [[ -z "$FRONTEND_URL" ]]; then
+            FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
+          fi
+
+          echo "backend_url=${BACKEND_URL}" >> "$GITHUB_OUTPUT"
+          echo "frontend_url=${FRONTEND_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Run smoke tests
+        run: |
+          chmod +x deploy/scripts/smoke-tests.sh
+          BASE_URL="${{ steps.endpoints.outputs.backend_url }}" \
+          FRONTEND_URL="${{ steps.endpoints.outputs.frontend_url }}" \
+          AUTH_USER="${{ secrets.SMOKE_TEST_USER }}" \
+          AUTH_PASS="${{ secrets.SMOKE_TEST_PASS }}" \
+          ./deploy/scripts/smoke-tests.sh
+
+      - name: Upload smoke test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-results
+          path: smoke-test-results.log
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Rollback (on failure)
+  # ──────────────────────────────────────────────────────────────────────────
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy, smoke-tests]
+    if: failure()
+
+    steps:
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p "${HOME}/.kube"
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Rollback backend deployment
+        run: |
+          echo "⚠️ Rolling back ${{ env.K8S_DEPLOYMENT_BACKEND }}..."
+          kubectl rollout undo deployment/${{ env.K8S_DEPLOYMENT_BACKEND }} \
+            --namespace=${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/${{ env.K8S_DEPLOYMENT_BACKEND }} \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --timeout=180s
+
+      - name: Rollback frontend deployment
+        run: |
+          echo "⚠️ Rolling back ${{ env.K8S_DEPLOYMENT_FRONTEND }}..."
+          kubectl rollout undo deployment/${{ env.K8S_DEPLOYMENT_FRONTEND }} \
+            --namespace=${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/${{ env.K8S_DEPLOYMENT_FRONTEND }} \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --timeout=180s
+
+      - name: Rollback mock SIEM deployment
+        run: |
+          echo "⚠️ Rolling back ${{ env.K8S_DEPLOYMENT_SIEM }}..."
+          kubectl rollout undo deployment/${{ env.K8S_DEPLOYMENT_SIEM }} \
+            --namespace=${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/${{ env.K8S_DEPLOYMENT_SIEM }} \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --timeout=180s
+
+      - name: Verify rollback
+        run: |
+          echo "Verifying rollback..."
+          kubectl get deployments -n ${{ env.K8S_NAMESPACE }}
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }}
+
+      - name: Notify rollback
+        run: |
+          echo "## ⚠️ Deployment Rolled Back" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version \`${{ needs.prepare.outputs.version }}\` deployment failed and was rolled back." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Affected Services" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ env.K8S_DEPLOYMENT_BACKEND }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ env.K8S_DEPLOYMENT_FRONTEND }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ env.K8S_DEPLOYMENT_SIEM }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Manual investigation required.**" >> "$GITHUB_STEP_SUMMARY"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Post-Deployment Notification
+  # ──────────────────────────────────────────────────────────────────────────
+  notify:
+    name: Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [prepare, smoke-tests]
+    if: always()
+
+    steps:
+      - name: Determine deployment status
+        id: status
+        run: |
+          if [[ "${{ needs.smoke-tests.result }}" == "success" ]]; then
+            STATUS="✅ Success"
+            EMOJI="rocket"
+          else
+            STATUS="❌ Failed"
+            EMOJI="warning"
+          fi
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+          echo "emoji=${EMOJI}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate deployment summary
+        run: |
+          echo "## :${{ steps.status.outputs.emoji }}: Deployment ${{ steps.status.outputs.status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Detail | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`${{ needs.prepare.outputs.version }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | \`${{ needs.prepare.outputs.short_sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | Production |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered by | \`${{ github.actor }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Workflow | \`${{ github.workflow }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Run | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify Slack (on failure)
+        if: failure()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"⚠️ Chaos-Sec deployment *${{ needs.prepare.outputs.version }}* FAILED\nCommit: ${{ needs.prepare.outputs.short_sha }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+            "${{ secrets.SLACK_WEBHOOK_URL }}" || true

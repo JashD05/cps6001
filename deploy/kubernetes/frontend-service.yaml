@@ -1,0 +1,45 @@
+# =============================================================================
+# Chaos-Sec Frontend Service
+# =============================================================================
+# ClusterIP service exposing the Chaos-Sec frontend Nginx server.
+# - Port 80: HTTP serving the React SPA static assets
+# Routes /api/ and /ws traffic to the backend via Nginx proxy config.
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: chaos-sec-frontend
+  namespace: chaos-sec
+  labels:
+    app.kubernetes.io/name: chaos-sec-frontend
+    app.kubernetes.io/component: ui
+    app.kubernetes.io/part-of: chaos-sec
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    description: "Chaos-Sec Frontend Dashboard service"
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+
+  # ──────────────────────────────────────────────
+  # Selector – matches the frontend Deployment pods
+  # ──────────────────────────────────────────────
+  selector:
+    app.kubernetes.io/name: chaos-sec-frontend
+    app.kubernetes.io/component: ui
+
+  # ──────────────────────────────────────────────
+  # Port Definitions
+  # ──────────────────────────────────────────────
+  ports:
+    # Main HTTP port – serves the React SPA and proxies API/WebSocket
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+      appProtocol: http

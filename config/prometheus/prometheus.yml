@@ -1,0 +1,162 @@
+# ============================================================================
+# Chaos-Sec: Prometheus Scrape Configuration
+# Collects metrics from the Chaos-Sec backend and infrastructure services
+# ============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+  # External labels added to every metric from this Prometheus instance
+  external_labels:
+    cluster: "chaos-sec-dev"
+    environment: "development"
+    monitor: "chaos-sec"
+
+# ──────────────────────────────────────────────
+# Alerting (placeholder — connect to Alertmanager later)
+# ──────────────────────────────────────────────
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#             - alertmanager:9093
+
+# ──────────────────────────────────────────────
+# Scrape Configurations
+# ──────────────────────────────────────────────
+scrape_configs:
+  # ──────────────────────────────────────────
+  # Prometheus self-monitoring
+  # ──────────────────────────────────────────
+  - job_name: "prometheus"
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - "localhost:9090"
+        labels:
+          service: "prometheus"
+          component: "monitoring"
+
+  # ──────────────────────────────────────────
+  # Chaos-Sec Backend API & Metrics
+  # Primary application metrics endpoint on port 9090
+  # ──────────────────────────────────────────
+  - job_name: "chaos-sec-backend"
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - "backend:9090"
+        labels:
+          service: "chaos-sec-backend"
+          component: "api"
+          env: "development"
+    # Metric relabeling — clean up labels for consistency
+    metric_relabel_configs:
+      # Drop Go runtime debug metrics we don't need
+      - source_labels: [__name__]
+        regex: "go_debug_.*"
+        action: drop
+      # Drop process-specific metrics that are too noisy in dev
+      - source_labels: [__name__]
+        regex: "process_start_time_seconds"
+        action: keep
+
+  # ──────────────────────────────────────────
+  # Chaos-Sec Backend — Kubernetes Service Discovery
+  # Automatically discovers backend pods when running in Kind cluster.
+  # Uncomment this section when deploying to Kubernetes.
+  # ──────────────────────────────────────────
+  # - job_name: "chaos-sec-backend-k8s"
+  #   scrape_interval: 15s
+  #   kubernetes_sd_configs:
+  #     - role: pod
+  #       namespaces:
+  #         names:
+  #           - chaos-sec
+  #           - chaos-sec-experiments
+  #   relabel_configs:
+  #     # Only scrape pods with the prometheus.io/scrape annotation
+  #     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+  #       action: keep
+  #       regex: true
+  #     # Use the port specified in the annotation
+  #     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+  #       action: replace
+  #       target_label: __address__
+  #       regex: (.+)
+  #       replacement: ${1}:9090
+  #     # Use the path specified in the annotation
+  #     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+  #       action: replace
+  #       target_label: __metrics_path__
+  #       regex: (.+)
+  #     # Carry over useful Kubernetes labels
+  #     - source_labels: [__meta_kubernetes_namespace]
+  #       action: replace
+  #       target_label: kubernetes_namespace
+  #     - source_labels: [__meta_kubernetes_pod_name]
+  #       action: replace
+  #       target_label: kubernetes_pod_name
+  #     - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+  #       action: replace
+  #       target_label: service
+  #     - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+  #       action: replace
+  #       target_label: component
+
+  # ──────────────────────────────────────────
+  # PostgreSQL Metrics (via postgres_exporter)
+  # Uncomment when postgres_exporter is added to docker-compose
+  # ──────────────────────────────────────────
+  # - job_name: "postgres"
+  #   scrape_interval: 30s
+  #   static_configs:
+  #     - targets:
+  #         - "postgres-exporter:9187"
+  #       labels:
+  #         service: "postgres"
+  #         component: "database"
+
+  # ──────────────────────────────────────────
+  # Redis Metrics (via redis_exporter)
+  # Uncomment when redis_exporter is added to docker-compose
+  # ──────────────────────────────────────────
+  # - job_name: "redis"
+  #   scrape_interval: 15s
+  #   static_configs:
+  #     - targets:
+  #         - "redis-exporter:9121"
+  #       labels:
+  #         service: "redis"
+  #         component: "cache"
+
+  # ──────────────────────────────────────────
+  # RabbitMQ Metrics (built-in Prometheus plugin)
+  # RabbitMQ 3.12+ exposes metrics at /metrics on the management port
+  # ──────────────────────────────────────────
+  # - job_name: "rabbitmq"
+  #   scrape_interval: 15s
+  #   static_configs:
+  #     - targets:
+  #         - "rabbitmq:15692"
+  #       labels:
+  #         service: "rabbitmq"
+  #         component: "messaging"
+
+  # ──────────────────────────────────────────
+  # Node Exporter (host-level system metrics)
+  # Uncomment when node_exporter is added to docker-compose
+  # ──────────────────────────────────────────
+  # - job_name: "node"
+  #   scrape_interval: 15s
+  #   static_configs:
+  #     - targets:
+  #         - "node-exporter:9100"
+  #       labels:
+  #         service: "node-exporter"
+  #         component: "system"
