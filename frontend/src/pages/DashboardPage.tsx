@@ -854,13 +854,13 @@ export default function DashboardPage() {
     ? useAppSelector(selectExperimentList)
     : [];
   const listLoading = useAppSelector(selectExperimentListLoading);
+  const realStats = useAppSelector(selectExperimentStats) ?? {};
   const stats = {
-    ...(useAppSelector(selectExperimentStats) ?? {}),
-    total: 0,
-    running: 0,
-    completed: 0,
-    failed: 0,
-    pending: 0,
+    total: realStats.total ?? 0,
+    running: realStats.running ?? 0,
+    completed: realStats.completed ?? 0,
+    failed: realStats.failed ?? 0,
+    pending: realStats.pending ?? 0,
   };
 
   const [summary] = useState<DashboardSummary>(MOCK_SUMMARY);

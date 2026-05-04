@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -154,31 +155,31 @@ func (m *Middleware) LoggingMiddleware() gin.HandlerFunc {
 // during development) to communicate with the API. In production, the
 // allowed origins should be restricted via environment configuration.
 func (m *Middleware) CORSMiddleware() gin.HandlerFunc {
-	// Determine allowed origins based on environment.
-	allowedOrigins := "*"
-	if !m.cfg.IsDevelopment() {
-		// In production, restrict to specific origins from environment.
-		// For now, we default to allowing all but log a warning.
-		m.logger.Warn("CORS allows all origins — configure CHAOS_CORS_ALLOWED_ORIGINS for production")
-	}
+	allowedOrigins := m.cfg.Server.CORSAllowedOrigins
 
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 
-		// Check if the origin is allowed.
-		if allowedOrigins == "*" {
+		if allowedOrigins != "" {
+			// Explicit origins configured
+			if isOriginAllowed(origin, allowedOrigins) {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Access-Control-Allow-Credentials", "true")
+			}
+		} else if m.cfg.IsDevelopment() {
+			// Development mode: allow all origins, but do NOT set credentials
+			// (browsers reject Access-Control-Allow-Credentials: true with wildcard origin)
 			c.Header("Access-Control-Allow-Origin", "*")
-		} else if isOriginAllowed(origin, allowedOrigins) {
-			c.Header("Access-Control-Allow-Origin", origin)
+		} else {
+			// Production without explicit CORS config: no CORS headers
+			m.logger.Error("CORS not configured — set CHAOS_CORS_ALLOWED_ORIGINS for production")
 		}
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Request-ID, X-API-Key")
-		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Max-Age", "86400") // Preflight cache: 24 hours
+		c.Header("Access-Control-Max-Age", "86400")
 		c.Header("Vary", "Origin")
 
-		// Handle preflight (OPTIONS) requests.
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
@@ -238,9 +239,35 @@ func (m *Middleware) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Check if the token has been blacklisted (e.g., after logout).
-		if m.rdb != nil {
-			blacklistKey := fmt.Sprintf("token:blacklist:%s", tokenString)
+		// Validate the token using the auth service FIRST so we can
+		// use the JTI claim for blacklist checks instead of the raw
+		// token string.
+		claims, err := m.authSvc.ValidateAccessToken(tokenString)
+		if err != nil {
+			m.logger.Debug("invalid access token",
+				zap.Error(err),
+				zap.String("request_id", getRequestID(c)),
+			)
+
+			status := http.StatusUnauthorized
+			errMsg := "Invalid or expired authentication token."
+
+			if errors.Is(err, auth.ErrExpiredToken) {
+				errMsg = "Authentication token has expired. Please refresh or log in again."
+			}
+
+			c.AbortWithStatusJSON(status, gin.H{
+				"error":   "unauthorized",
+				"message": errMsg,
+				"code":    status,
+			})
+			return
+		}
+
+		// Check if the token has been blacklisted using the JTI claim
+		// (e.g., after logout).
+		if m.rdb != nil && claims.ID != "" {
+			blacklistKey := fmt.Sprintf("token:blacklist:%s", claims.ID)
 			blacklisted, err := m.rdb.Exists(c.Request.Context(), blacklistKey).Result()
 			if err != nil && err != redis.Nil {
 				m.logger.Error("redis error checking token blacklist",
@@ -259,29 +286,6 @@ func (m *Middleware) AuthMiddleware() gin.HandlerFunc {
 				})
 				return
 			}
-		}
-
-		// Validate the token using the auth service.
-		claims, err := m.authSvc.ValidateAccessToken(tokenString)
-		if err != nil {
-			m.logger.Debug("invalid access token",
-				zap.Error(err),
-				zap.String("request_id", getRequestID(c)),
-			)
-
-			status := http.StatusUnauthorized
-			errMsg := "Invalid or expired authentication token."
-
-			if err == auth.ErrExpiredToken {
-				errMsg = "Authentication token has expired. Please refresh or log in again."
-			}
-
-			c.AbortWithStatusJSON(status, gin.H{
-				"error":   "unauthorized",
-				"message": errMsg,
-				"code":    status,
-			})
-			return
 		}
 
 		// Store claims in context for downstream handlers and RBAC middleware.
@@ -311,10 +315,10 @@ func (m *Middleware) RBACMiddleware(requiredPermissions ...string) gin.HandlerFu
 			m.logger.Error("RBAC middleware used without auth middleware",
 				zap.String("path", c.Request.URL.Path),
 			)
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error":   "unauthorized",
-				"message": "Authentication required.",
-				"code":    http.StatusUnauthorized,
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"error":   "internal_error",
+				"message": "Authentication context missing. Ensure auth middleware is configured.",
+				"code":    http.StatusInternalServerError,
 			})
 			return
 		}
@@ -617,10 +621,11 @@ func getRequestID(c *gin.Context) string {
 // for deployments without Redis. It is thread-safe and automatically
 // cleans up stale entries.
 type localRateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*rateBucket
-	window  time.Duration
-	stopCh  chan struct{}
+	mu       sync.Mutex
+	buckets  map[string]*rateBucket
+	window   time.Duration
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // rateBucket tracks request counts within a time window.
@@ -663,11 +668,7 @@ func (rl *localRateLimiter) allow(key string, limit int) bool {
 	}
 
 	bucket.count++
-	if bucket.count > limit {
-		return false
-	}
-
-	return true
+	return bucket.count <= limit
 }
 
 // cleanup periodically removes expired buckets to prevent memory leaks.
@@ -694,5 +695,7 @@ func (rl *localRateLimiter) cleanup() {
 
 // Stop terminates the cleanup goroutine. Call this during graceful shutdown.
 func (rl *localRateLimiter) Stop() {
-	close(rl.stopCh)
+	rl.stopOnce.Do(func() {
+		close(rl.stopCh)
+	})
 }

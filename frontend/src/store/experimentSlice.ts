@@ -8,6 +8,7 @@ import { experimentsAPI, getErrorMessage } from '@/services/api';
 import type {
   Experiment,
   ExperimentRun,
+  ExperimentResult,
   ExperimentFilters,
   ExperimentListState,
   ExperimentDetailState,
@@ -95,9 +96,9 @@ export const deleteExperiment = createAsyncThunk(
 
 export const executeExperiment = createAsyncThunk(
   'experiments/execute',
-  async (id: string, { rejectWithValue }) => {
+  async ({ id, clusterId }: { id: string; clusterId?: string }, { rejectWithValue }) => {
     try {
-      const response = await experimentsAPI.execute(id);
+      const response = await experimentsAPI.execute(id, clusterId);
       return { id, run: response.data.data as ExperimentRun };
     } catch (error) {
       return rejectWithValue(getErrorMessage(error));
@@ -107,12 +108,26 @@ export const executeExperiment = createAsyncThunk(
 
 export const stopExperiment = createAsyncThunk(
   'experiments/stop',
-  async (id: string, { rejectWithValue }) => {
+  async (id: string, { dispatch, rejectWithValue }) => {
     try {
       const response = await experimentsAPI.stop(id);
       return response.data.data as Experiment;
     } catch (error) {
-      return rejectWithValue(getErrorMessage(error));
+      const message = getErrorMessage(error);
+      const isIdempotentStopError =
+        /no .*running experiment.*stop|already (?:completed|stopped)|terminal state/i.test(
+          message,
+        );
+
+      if (isIdempotentStopError) {
+        try {
+          return await dispatch(fetchExperimentById(id)).unwrap();
+        } catch {
+          // Fall through to the original error if refresh also fails.
+        }
+      }
+
+      return rejectWithValue(message);
     }
   },
 );
@@ -411,19 +426,30 @@ const experimentSlice = createSlice({
       .addCase(executeExperiment.fulfilled, (state, action) => {
         state.executeStatus = 'succeeded';
         const { id, run } = action.payload;
-        // Update experiment status in list
+
+        // Mark the experiment as running in the list so the UI updates immediately.
+        // The actual run progress and results will come from the backend on refresh.
         const listExperiment = state.list.experiments.find((e) => e.id === id);
         if (listExperiment) {
           listExperiment.status = 'running';
+          listExperiment.startedAt = run.startedAt ?? listExperiment.startedAt;
           listExperiment.progress = 0;
-          listExperiment.startedAt = run.startedAt;
+          listExperiment.result = undefined;
         }
-        // Update experiment status in detail
+
         if (state.detail.experiment?.id === id) {
-          state.detail.experiment.status = 'running';
-          state.detail.experiment.progress = 0;
-          state.detail.experiment.startedAt = run.startedAt;
-          state.detail.currentRun = run;
+          state.detail.experiment = {
+            ...state.detail.experiment,
+            status: 'running',
+            startedAt: run.startedAt ?? state.detail.experiment.startedAt,
+            progress: 0,
+            result: undefined,
+          };
+          state.detail.currentRun = {
+            ...run,
+            status: 'running',
+            progress: 0,
+          };
         }
       })
       .addCase(executeExperiment.rejected, (state, action) => {
@@ -441,22 +467,45 @@ const experimentSlice = createSlice({
       })
       .addCase(stopExperiment.fulfilled, (state, action) => {
         state.stopStatus = 'succeeded';
+        state.executeStatus = 'idle';
+        state.executeError = null;
         const updated = action.payload;
+        const stoppedExperiment: Experiment = {
+          ...updated,
+          status: 'stopped',
+          steps: Array.isArray(updated.steps)
+            ? updated.steps.map((step) =>
+                step.status === 'completed' || step.status === 'failed'
+                  ? step
+                  : {
+                      ...step,
+                      status: 'skipped',
+                    },
+              )
+            : updated.steps,
+          progress: 0,
+        };
+
         // Update in list
         const listExperiment = state.list.experiments.find((e) => e.id === updated.id);
         if (listExperiment) {
-          listExperiment.status = updated.status;
-          listExperiment.progress = updated.progress;
-          listExperiment.completedAt = updated.completedAt;
+          listExperiment.status = stoppedExperiment.status;
+          listExperiment.progress = stoppedExperiment.progress;
+          listExperiment.completedAt = stoppedExperiment.completedAt;
+          listExperiment.steps = stoppedExperiment.steps;
         }
         // Update in detail
         if (state.detail.experiment?.id === updated.id) {
-          state.detail.experiment = updated;
+          state.detail.experiment = stoppedExperiment;
+          state.detail.currentRun = null;
+          state.detail.logs = [];
         }
       })
       .addCase(stopExperiment.rejected, (state, action) => {
         state.stopStatus = 'failed';
-        state.stopError = (action.payload as string) ?? 'Failed to stop experiment';
+        state.stopError =
+          (action.payload as string) ??
+          "Failed to stop experiment. It may have already completed, or the server couldn't process the request. Please refresh and try again.";
       });
 
     // -----------------------------------------------------------------------
@@ -552,6 +601,13 @@ export const selectExperimentSort = (state: {
   sortBy: state.experiments?.list?.sortBy ?? 'createdAt',
   sortOrder: state.experiments?.list?.sortOrder ?? 'desc',
 });
+
+export const selectExperimentSortBy = (state: { experiments: ExperimentState }): string =>
+  state.experiments?.list?.sortBy ?? 'createdAt';
+
+export const selectExperimentSortOrder = (state: {
+  experiments: ExperimentState;
+}): 'asc' | 'desc' => state.experiments?.list?.sortOrder ?? 'desc';
 
 export const selectExperimentDetail = (state: {
   experiments: ExperimentState;

@@ -118,8 +118,14 @@ func (s *Service) SendNotification(ctx context.Context, event NotificationEvent)
 		return results
 	}
 
+	return s.sendSync(ctx, event)
+}
+
+// sendSync sends notifications synchronously across all enabled channels.
+func (s *Service) sendSync(ctx context.Context, event NotificationEvent) []NotificationResult {
 	s.channelMu.RLock()
 	defer s.channelMu.RUnlock()
+	results := make([]NotificationResult, 0)
 
 	if s.emailEnabled {
 		result := s.sendEmail(ctx, event)
@@ -144,7 +150,7 @@ func (s *Service) sendAsync(event NotificationEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	s.SendNotification(ctx, event)
+	s.sendSync(ctx, event)
 }
 
 // sendEmail sends an email notification.
@@ -315,7 +321,7 @@ func (s *Service) buildEmailSubject(event NotificationEvent) string {
 	case "experiment_cancelled":
 		return fmt.Sprintf("⚠️ Experiment Cancelled - %s", event.Title)
 	case "siem_alert_missed":
-		return fmt.Sprintf("🚨 SIEM Alert Missed - Security Gap Detected")
+		return "🚨 SIEM Alert Missed - Security Gap Detected"
 	default:
 		return fmt.Sprintf("Chaos-Sec Notification - %s", event.Title)
 	}

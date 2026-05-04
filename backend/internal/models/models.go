@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // Base contains common columns shared across all models.
@@ -427,7 +428,7 @@ type ExperimentTemplateInput struct {
 
 // ExecuteExperimentRequest represents an experiment execution request.
 type ExecuteExperimentRequest struct {
-	ClusterID string `json:"cluster_id" binding:"required,uuid"`
+	ClusterID string `json:"cluster_id"`
 }
 
 // ListExperimentsQuery represents query parameters for listing experiments.
@@ -438,6 +439,7 @@ type ListExperimentsQuery struct {
 	SortBy    string `form:"sort_by,default=created_at"`
 	SortOrder string `form:"sort_order,default=desc"`
 	Search    string `form:"search"`
+	ClusterID string `form:"cluster_id"`
 }
 
 // PaginatedResponse is a generic paginated response wrapper.
@@ -464,6 +466,13 @@ type ErrorResponse struct {
 	Code    int    `json:"code"`
 }
 
+// APIResponse represents a standard success response wrapper.
+type APIResponse struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data"`
+	Message string      `json:"message,omitempty"`
+}
+
 // DashboardSummary represents aggregated dashboard data.
 type DashboardSummary struct {
 	TotalExperiments  int64                  `json:"total_experiments"`
@@ -485,8 +494,32 @@ type ExperimentRunSummary struct {
 	DurationMs   *int64     `json:"duration_ms"`
 }
 
-// ReportResponse represents an experiment report.
+// Report represents a stored experiment report.
+type Report struct {
+	ID             uuid.UUID      `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	OrganizationID uuid.UUID      `json:"organization_id" gorm:"type:uuid;not null;index"`
+	Title          string         `json:"title" gorm:"type:varchar(255);not null"`
+	Type           string         `json:"type" gorm:"type:varchar(50);not null;default:'experiment'"`
+	Format         string         `json:"format" gorm:"type:varchar(20);not null;default:'pdf'"`
+	Description    string         `json:"description" gorm:"type:text"`
+	ExperimentIDs  pq.StringArray `json:"experiment_ids" gorm:"type:text[]"`
+	DateRangeFrom  *time.Time     `json:"date_range_from" gorm:"column:date_range_from"`
+	DateRangeTo    *time.Time     `json:"date_range_to" gorm:"column:date_range_to"`
+	Status         string         `json:"status" gorm:"type:varchar(20);not null;default:'pending'"`
+	ErrorMessage   *string        `json:"error_message" gorm:"type:text"`
+	DownloadURL    *string        `json:"download_url" gorm:"type:varchar(500)"`
+	FileSize       *int64         `json:"file_size" gorm:"type:bigint"`
+	GeneratedBy    uuid.UUID      `json:"generated_by" gorm:"type:uuid;not null"`
+	CreatedAt      time.Time      `json:"created_at" gorm:"not null;default:now()"`
+	UpdatedAt      time.Time      `json:"updated_at" gorm:"not null;default:now()"`
+}
+
+// TableName specifies the table name for Report.
+func (Report) TableName() string { return "reports" }
+
+// ReportResponse represents an experiment report response with metadata.
 type ReportResponse struct {
+	Report     *Report           `json:"report,omitempty"`
 	Experiment Experiment        `json:"experiment"`
 	Runs       []ExperimentRun   `json:"runs"`
 	Summary    *RunResultSummary `json:"summary,omitempty"`

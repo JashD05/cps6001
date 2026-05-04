@@ -69,6 +69,7 @@ import {
   selectCreateError,
   resetCreateStatus,
 } from '@/store/experimentSlice';
+import { clustersAPI, templatesAPI } from '@/services/api';
 import StatusBadge from '@/components/StatusBadge';
 import type {
   AttackTemplate,
@@ -85,13 +86,25 @@ import type {
 // ---------------------------------------------------------------------------
 
 const STEPS = [
-  { label: 'Select Template', icon: <TemplateIcon />, description: 'Choose an attack template' },
+  {
+    label: 'Select Template',
+    icon: <TemplateIcon />,
+    description: 'Choose an attack template',
+  },
   { label: 'Configure', icon: <ConfigIcon />, description: 'Set parameters and target' },
-  { label: 'Validation', icon: <ValidationIcon />, description: 'Define SIEM validation rules' },
+  {
+    label: 'Validation',
+    icon: <ValidationIcon />,
+    description: 'Define SIEM validation rules',
+  },
   { label: 'Review', icon: <ReviewIcon />, description: 'Confirm and create' },
 ];
 
-const CATEGORY_OPTIONS: { value: TemplateCategory | 'all'; label: string; color: string }[] = [
+const CATEGORY_OPTIONS: {
+  value: TemplateCategory | 'all';
+  label: string;
+  color: string;
+}[] = [
   { value: 'all', label: 'All', color: '#64748B' },
   { value: 'network', label: 'Network', color: '#2563EB' },
   { value: 'application', label: 'Application', color: '#7C3AED' },
@@ -108,6 +121,51 @@ const SEVERITY_COLORS: Record<TemplateSeverity, string> = {
   critical: '#EF4444',
 };
 
+const FRIENDLY_PARAMETER_LABELS: Record<string, { label: string; description: string }> =
+  {
+    attempts: { label: 'Attempts', description: 'How many tries to make.' },
+    target_namespace: {
+      label: 'Namespace',
+      description: 'Where the test should run inside the cluster.',
+    },
+    test_port: { label: 'Port', description: 'Which port to check.' },
+    test_cidr: {
+      label: 'IP range',
+      description: 'Which address range to test against the policy.',
+    },
+    policy_name: {
+      label: 'Policy name',
+      description: 'Leave blank to test every policy in the namespace.',
+    },
+    timeout_seconds: {
+      label: 'Timeout',
+      description: 'How long to wait before stopping the test.',
+    },
+  };
+
+const isAdvancedParameter = (param: TemplateParameter): boolean => {
+  if (param.required) return false;
+  const key = param.key.toLowerCase();
+  return (
+    key.includes('timeout') ||
+    key.includes('cidr') ||
+    key.includes('policy') ||
+    key.includes('selector') ||
+    key.includes('interval') ||
+    key.includes('concurrency') ||
+    key.includes('rule') ||
+    key.includes('config')
+  );
+};
+
+const getParameterCopy = (param: TemplateParameter) => {
+  const friendly = FRIENDLY_PARAMETER_LABELS[param.key.toLowerCase()];
+  return {
+    label: friendly?.label ?? param.label,
+    description: friendly?.description ?? param.description,
+  };
+};
+
 // ---------------------------------------------------------------------------
 // Mock Data (would come from API in production)
 // ---------------------------------------------------------------------------
@@ -116,7 +174,8 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
   {
     id: 'tmpl-dns-exfil',
     name: 'DNS Exfiltration',
-    description: 'Simulates data exfiltration via DNS queries to detect DLP and monitoring gaps.',
+    description:
+      'Simulates data exfiltration via DNS queries to detect DLP and monitoring gaps.',
     category: 'network',
     severity: 'high',
     icon: '📡',
@@ -164,13 +223,41 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
       },
     ],
     attackPhases: [
-      { name: 'Setup', description: 'Deploy DNS exfil pod', technique: 'T1048', tactic: 'Exfiltration', duration: 30 },
-      { name: 'Execute', description: 'Perform DNS queries', technique: 'T1048.003', tactic: 'Exfiltration', duration: 120 },
-      { name: 'Cleanup', description: 'Remove artifacts', technique: 'T1070', tactic: 'Defense Evasion', duration: 20 },
+      {
+        name: 'Setup',
+        description: 'Deploy DNS exfil pod',
+        technique: 'T1048',
+        tactic: 'Exfiltration',
+        duration: 30,
+      },
+      {
+        name: 'Execute',
+        description: 'Perform DNS queries',
+        technique: 'T1048.003',
+        tactic: 'Exfiltration',
+        duration: 120,
+      },
+      {
+        name: 'Cleanup',
+        description: 'Remove artifacts',
+        technique: 'T1070',
+        tactic: 'Defense Evasion',
+        duration: 20,
+      },
     ],
     expectedDetections: [
-      { source: 'SIEM', type: 'dns_anomaly', description: 'Unusual DNS query volume or pattern', confidence: 0.85 },
-      { source: 'DLP', type: 'data_loss', description: 'Data loss prevention alert', confidence: 0.7 },
+      {
+        source: 'SIEM',
+        type: 'dns_anomaly',
+        description: 'Unusual DNS query volume or pattern',
+        confidence: 0.85,
+      },
+      {
+        source: 'DLP',
+        type: 'data_loss',
+        description: 'Data loss prevention alert',
+        confidence: 0.7,
+      },
     ],
     tags: ['dns', 'exfiltration', 'network', 'dlp'],
     isOfficial: true,
@@ -181,7 +268,8 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
   {
     id: 'tmpl-brute-force',
     name: 'Brute Force Attack',
-    description: 'Simulates credential brute force attacks against Kubernetes service accounts.',
+    description:
+      'Simulates credential brute force attacks against Kubernetes service accounts.',
     category: 'identity',
     severity: 'critical',
     icon: '🔓',
@@ -216,12 +304,34 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
       },
     ],
     attackPhases: [
-      { name: 'Recon', description: 'Identify target service', technique: 'T1595', tactic: 'Reconnaissance', duration: 15 },
-      { name: 'Attack', description: 'Brute force credentials', technique: 'T1110', tactic: 'Credential Access', duration: 180 },
+      {
+        name: 'Recon',
+        description: 'Identify target service',
+        technique: 'T1595',
+        tactic: 'Reconnaissance',
+        duration: 15,
+      },
+      {
+        name: 'Attack',
+        description: 'Brute force credentials',
+        technique: 'T1110',
+        tactic: 'Credential Access',
+        duration: 180,
+      },
     ],
     expectedDetections: [
-      { source: 'SIEM', type: 'brute_force', description: 'Multiple failed login attempts', confidence: 0.95 },
-      { source: 'IDS', type: 'intrusion', description: 'Intrusion detection alert', confidence: 0.8 },
+      {
+        source: 'SIEM',
+        type: 'brute_force',
+        description: 'Multiple failed login attempts',
+        confidence: 0.95,
+      },
+      {
+        source: 'IDS',
+        type: 'intrusion',
+        description: 'Intrusion detection alert',
+        confidence: 0.8,
+      },
     ],
     tags: ['brute-force', 'identity', 'credentials'],
     isOfficial: true,
@@ -232,7 +342,8 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
   {
     id: 'tmpl-pod-kill',
     name: 'Pod Kill',
-    description: 'Randomly kills pods to test cluster resilience and auto-healing capabilities.',
+    description:
+      'Randomly kills pods to test cluster resilience and auto-healing capabilities.',
     category: 'infrastructure',
     severity: 'medium',
     icon: '💀',
@@ -276,13 +387,41 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
       },
     ],
     attackPhases: [
-      { name: 'Identify', description: 'Find target pods', technique: 'T1087', tactic: 'Discovery', duration: 10 },
-      { name: 'Kill', description: 'Terminate pods', technique: 'T1489', tactic: 'Impact', duration: 60 },
-      { name: 'Observe', description: 'Monitor recovery', technique: 'T1046', tactic: 'Discovery', duration: 120 },
+      {
+        name: 'Identify',
+        description: 'Find target pods',
+        technique: 'T1087',
+        tactic: 'Discovery',
+        duration: 10,
+      },
+      {
+        name: 'Kill',
+        description: 'Terminate pods',
+        technique: 'T1489',
+        tactic: 'Impact',
+        duration: 60,
+      },
+      {
+        name: 'Observe',
+        description: 'Monitor recovery',
+        technique: 'T1046',
+        tactic: 'Discovery',
+        duration: 120,
+      },
     ],
     expectedDetections: [
-      { source: 'Monitoring', type: 'pod_down', description: 'Pod downtime alert', confidence: 0.99 },
-      { source: 'SIEM', type: 'service_degradation', description: 'Service degradation alert', confidence: 0.75 },
+      {
+        source: 'Monitoring',
+        type: 'pod_down',
+        description: 'Pod downtime alert',
+        confidence: 0.99,
+      },
+      {
+        source: 'SIEM',
+        type: 'service_degradation',
+        description: 'Service degradation alert',
+        confidence: 0.75,
+      },
     ],
     tags: ['pod-kill', 'infrastructure', 'resilience', 'chaos'],
     isOfficial: true,
@@ -293,7 +432,8 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
   {
     id: 'tmpl-network-partition',
     name: 'Network Partition',
-    description: 'Simulates network partitions between pods to test service mesh failover and redundancy.',
+    description:
+      'Simulates network partitions between pods to test service mesh failover and redundancy.',
     category: 'network',
     severity: 'high',
     icon: '🌐',
@@ -340,13 +480,41 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
       },
     ],
     attackPhases: [
-      { name: 'Inject', description: 'Apply network rules', technique: 'T1498', tactic: 'Impact', duration: 10 },
-      { name: 'Hold', description: 'Maintain partition', technique: 'T1498', tactic: 'Impact', duration: 60 },
-      { name: 'Recover', description: 'Remove network rules', technique: 'T1070', tactic: 'Defense Evasion', duration: 10 },
+      {
+        name: 'Inject',
+        description: 'Apply network rules',
+        technique: 'T1498',
+        tactic: 'Impact',
+        duration: 10,
+      },
+      {
+        name: 'Hold',
+        description: 'Maintain partition',
+        technique: 'T1498',
+        tactic: 'Impact',
+        duration: 60,
+      },
+      {
+        name: 'Recover',
+        description: 'Remove network rules',
+        technique: 'T1070',
+        tactic: 'Defense Evasion',
+        duration: 10,
+      },
     ],
     expectedDetections: [
-      { source: 'Service Mesh', type: 'circuit_breaker', description: 'Circuit breaker activation', confidence: 0.9 },
-      { source: 'Monitoring', type: 'latency_spike', description: 'Latency increase alert', confidence: 0.85 },
+      {
+        source: 'Service Mesh',
+        type: 'circuit_breaker',
+        description: 'Circuit breaker activation',
+        confidence: 0.9,
+      },
+      {
+        source: 'Monitoring',
+        type: 'latency_spike',
+        description: 'Latency increase alert',
+        confidence: 0.85,
+      },
     ],
     tags: ['network', 'partition', 'service-mesh', 'resilience'],
     isOfficial: true,
@@ -357,7 +525,8 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
   {
     id: 'tmpl-priv-escalation',
     name: 'Privilege Escalation',
-    description: 'Tests for container privilege escalation vectors and RBAC misconfigurations.',
+    description:
+      'Tests for container privilege escalation vectors and RBAC misconfigurations.',
     category: 'application',
     severity: 'critical',
     icon: '⬆️',
@@ -395,13 +564,41 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
       },
     ],
     attackPhases: [
-      { name: 'Recon', description: 'Enumerate permissions', technique: 'T1087', tactic: 'Discovery', duration: 20 },
-      { name: 'Exploit', description: 'Attempt escalation', technique: 'T1548', tactic: 'Privilege Escalation', duration: 60 },
-      { name: 'Verify', description: 'Check elevated access', technique: 'T1087', tactic: 'Discovery', duration: 15 },
+      {
+        name: 'Recon',
+        description: 'Enumerate permissions',
+        technique: 'T1087',
+        tactic: 'Discovery',
+        duration: 20,
+      },
+      {
+        name: 'Exploit',
+        description: 'Attempt escalation',
+        technique: 'T1548',
+        tactic: 'Privilege Escalation',
+        duration: 60,
+      },
+      {
+        name: 'Verify',
+        description: 'Check elevated access',
+        technique: 'T1087',
+        tactic: 'Discovery',
+        duration: 15,
+      },
     ],
     expectedDetections: [
-      { source: 'SIEM', type: 'privilege_escalation', description: 'Privilege escalation attempt detected', confidence: 0.9 },
-      { source: 'Runtime Security', type: 'container_escape', description: 'Container escape attempt', confidence: 0.85 },
+      {
+        source: 'SIEM',
+        type: 'privilege_escalation',
+        description: 'Privilege escalation attempt detected',
+        confidence: 0.9,
+      },
+      {
+        source: 'Runtime Security',
+        type: 'container_escape',
+        description: 'Container escape attempt',
+        confidence: 0.85,
+      },
     ],
     tags: ['privilege-escalation', 'rbac', 'container-security'],
     isOfficial: true,
@@ -412,7 +609,8 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
   {
     id: 'tmpl-data-access',
     name: 'Unauthorized Data Access',
-    description: 'Attempts to access sensitive data stores to validate access controls and audit logging.',
+    description:
+      'Attempts to access sensitive data stores to validate access controls and audit logging.',
     category: 'data',
     severity: 'high',
     icon: '🗃️',
@@ -456,13 +654,41 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
       },
     ],
     attackPhases: [
-      { name: 'Probe', description: 'Discover data resources', technique: 'T1526', tactic: 'Discovery', duration: 15 },
-      { name: 'Access', description: 'Attempt unauthorized read', technique: 'T1530', tactic: 'Collection', duration: 30 },
-      { name: 'Exfiltrate', description: 'Attempt data copy', technique: 'T1537', tactic: 'Exfiltration', duration: 20 },
+      {
+        name: 'Probe',
+        description: 'Discover data resources',
+        technique: 'T1526',
+        tactic: 'Discovery',
+        duration: 15,
+      },
+      {
+        name: 'Access',
+        description: 'Attempt unauthorized read',
+        technique: 'T1530',
+        tactic: 'Collection',
+        duration: 30,
+      },
+      {
+        name: 'Exfiltrate',
+        description: 'Attempt data copy',
+        technique: 'T1537',
+        tactic: 'Exfiltration',
+        duration: 20,
+      },
     ],
     expectedDetections: [
-      { source: 'CloudTrail', type: 'unauthorized_access', description: 'Unauthorized access attempt logged', confidence: 0.95 },
-      { source: 'SIEM', type: 'data_access_anomaly', description: 'Anomalous data access pattern', confidence: 0.8 },
+      {
+        source: 'CloudTrail',
+        type: 'unauthorized_access',
+        description: 'Unauthorized access attempt logged',
+        confidence: 0.95,
+      },
+      {
+        source: 'SIEM',
+        type: 'data_access_anomaly',
+        description: 'Anomalous data access pattern',
+        confidence: 0.8,
+      },
     ],
     tags: ['data-access', 'cloud', 'audit', 'compliance'],
     isOfficial: true,
@@ -483,7 +709,20 @@ const MOCK_CLUSTERS: Cluster[] = [
     version: '1.28.3',
     nodeCount: 5,
     namespaceCount: 12,
-    namespaces: ['default', 'kube-system', 'monitoring', 'app-frontend', 'app-backend', 'app-data', 'chaos-sec', 'istio-system', 'cert-manager', 'logging', 'ingress', 'security'],
+    namespaces: [
+      'default',
+      'kube-system',
+      'monitoring',
+      'app-frontend',
+      'app-backend',
+      'app-data',
+      'chaos-sec',
+      'istio-system',
+      'cert-manager',
+      'logging',
+      'ingress',
+      'security',
+    ],
     labels: { env: 'prod', region: 'us-east' },
     lastHealthCheck: new Date().toISOString(),
     createdAt: '2023-06-01T00:00:00Z',
@@ -499,7 +738,16 @@ const MOCK_CLUSTERS: Cluster[] = [
     version: '1.27.8',
     nodeCount: 3,
     namespaceCount: 8,
-    namespaces: ['default', 'kube-system', 'monitoring', 'staging-app', 'chaos-sec', 'istio-system', 'cert-manager', 'logging'],
+    namespaces: [
+      'default',
+      'kube-system',
+      'monitoring',
+      'staging-app',
+      'chaos-sec',
+      'istio-system',
+      'cert-manager',
+      'logging',
+    ],
     labels: { env: 'staging', region: 'eu-west' },
     lastHealthCheck: new Date().toISOString(),
     createdAt: '2023-08-15T00:00:00Z',
@@ -589,7 +837,6 @@ const initialWizardState: WizardState = {
   customRules: {},
   newRuleKey: '',
   newRuleValue: '',
-
 };
 
 // ---------------------------------------------------------------------------
@@ -606,37 +853,89 @@ const CreateExperimentPage: React.FC = () => {
   const createError = useSelector(selectCreateError);
 
   const [activeStep, setActiveStep] = useState(0);
+  const [showAdvancedParameters, setShowAdvancedParameters] = useState(false);
   const [wizard, setWizard] = useState<WizardState>(initialWizardState);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [templates, setTemplates] = useState<AttackTemplate[]>(MOCK_TEMPLATES);
+  const [clusters, setClusters] = useState<Cluster[]>(MOCK_CLUSTERS);
+
+  React.useEffect(() => {
+    let isMounted = true;
+
+    const loadTemplates = async () => {
+      try {
+        const response = await templatesAPI.list();
+        if (!isMounted) return;
+
+        const loadedTemplates = response.data.items.filter((template) =>
+          /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(
+            template.id,
+          ),
+        ) as AttackTemplate[];
+
+        if (loadedTemplates.length > 0) {
+          setTemplates(loadedTemplates);
+        }
+      } catch {
+        // Keep fallback templates when the API is unavailable.
+      }
+    };
+
+    const loadClusters = async () => {
+      try {
+        const response = await clustersAPI.list();
+        if (!isMounted) return;
+
+        const loadedClusters = response.data.items.filter((cluster) =>
+          /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(
+            cluster.id,
+          ),
+        );
+
+        if (loadedClusters.length > 0) {
+          setClusters(loadedClusters);
+        }
+      } catch {
+        // Keep fallback clusters when the API is unavailable.
+      }
+    };
+
+    loadTemplates();
+    loadClusters();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // -----------------------------------------------------------------------
   // Computed Values
   // -----------------------------------------------------------------------
 
   const selectedTemplate = useMemo(
-    () => MOCK_TEMPLATES.find((t) => t.id === wizard.selectedTemplateId) ?? null,
-    [wizard.selectedTemplateId],
+    () => templates.find((t) => t.id === wizard.selectedTemplateId) ?? null,
+    [templates, wizard.selectedTemplateId],
   );
 
   const selectedCluster = useMemo(
-    () => MOCK_CLUSTERS.find((c) => c.id === wizard.clusterId) ?? null,
-    [wizard.clusterId],
+    () => clusters.find((c) => c.id === wizard.clusterId) ?? null,
+    [clusters, wizard.clusterId],
   );
 
   const filteredTemplates = useMemo(() => {
-    let templates = MOCK_TEMPLATES;
+    let filtered = templates;
 
     if (wizard.templateCategory !== 'all') {
-      templates = templates.filter((t) => t.category === wizard.templateCategory);
+      filtered = filtered.filter((t) => t.category === wizard.templateCategory);
     }
 
     if (wizard.templateSeverity !== 'all') {
-      templates = templates.filter((t) => t.severity === wizard.templateSeverity);
+      filtered = filtered.filter((t) => t.severity === wizard.templateSeverity);
     }
 
     if (wizard.templateSearch.trim()) {
       const search = wizard.templateSearch.toLowerCase();
-      templates = templates.filter(
+      filtered = filtered.filter(
         (t) =>
           t.name.toLowerCase().includes(search) ||
           t.description.toLowerCase().includes(search) ||
@@ -644,8 +943,13 @@ const CreateExperimentPage: React.FC = () => {
       );
     }
 
-    return templates;
-  }, [wizard.templateCategory, wizard.templateSeverity, wizard.templateSearch]);
+    return filtered;
+  }, [
+    templates,
+    wizard.templateCategory,
+    wizard.templateSeverity,
+    wizard.templateSearch,
+  ]);
 
   const isStepValid = useMemo(() => {
     switch (activeStep) {
@@ -671,12 +975,9 @@ const CreateExperimentPage: React.FC = () => {
   // Handlers
   // -----------------------------------------------------------------------
 
-  const updateWizard = useCallback(
-    (updates: Partial<WizardState>) => {
-      setWizard((prev) => ({ ...prev, ...updates }));
-    },
-    [],
-  );
+  const updateWizard = useCallback((updates: Partial<WizardState>) => {
+    setWizard((prev) => ({ ...prev, ...updates }));
+  }, []);
 
   const handleNext = useCallback(() => {
     // Validate current step before advancing
@@ -699,7 +1000,11 @@ const CreateExperimentPage: React.FC = () => {
       // Validate template parameters
       if (selectedTemplate) {
         selectedTemplate.parameters.forEach((param) => {
-          if (param.required && (wizard.parameters[param.key] === undefined || wizard.parameters[param.key] === '')) {
+          if (
+            param.required &&
+            (wizard.parameters[param.key] === undefined ||
+              wizard.parameters[param.key] === '')
+          ) {
             newErrors[`step1.param.${param.key}`] = `${param.label} is required`;
           }
         });
@@ -746,7 +1051,7 @@ const CreateExperimentPage: React.FC = () => {
     };
 
     const result = await dispatch(createExperiment(request));
-    if (createExperiment.fulfilled.match(result)) {
+    if (createExperiment.fulfilled.match(result) && result.payload?.id) {
       navigate(`/experiments/${result.payload.id}`);
     }
   }, [dispatch, navigate, selectedTemplate, wizard]);
@@ -757,7 +1062,7 @@ const CreateExperimentPage: React.FC = () => {
 
   const handleTemplateSelect = useCallback(
     (templateId: string) => {
-      const template = MOCK_TEMPLATES.find((t) => t.id === templateId);
+      const template = templates.find((t) => t.id === templateId);
       const defaultParams: Record<string, unknown> = {};
       if (template) {
         template.parameters.forEach((param) => {
@@ -779,23 +1084,20 @@ const CreateExperimentPage: React.FC = () => {
         return rest;
       });
     },
-    [],
+    [templates],
   );
 
-  const handleParameterChange = useCallback(
-    (key: string, value: unknown) => {
-      setWizard((prev) => ({
-        ...prev,
-        parameters: { ...prev.parameters, [key]: value },
-      }));
-      // Clear param error
-      setFieldErrors((prev) => {
-        const { [`step1.param.${key}`]: _, ...rest } = prev;
-        return rest;
-      });
-    },
-    [],
-  );
+  const handleParameterChange = useCallback((key: string, value: unknown) => {
+    setWizard((prev) => ({
+      ...prev,
+      parameters: { ...prev.parameters, [key]: value },
+    }));
+    // Clear param error
+    setFieldErrors((prev) => {
+      const { [`step1.param.${key}`]: _, ...rest } = prev;
+      return rest;
+    });
+  }, []);
 
   const handleAddTag = useCallback(() => {
     const tag = wizard.tagInput.trim().toLowerCase();
@@ -833,18 +1135,20 @@ const CreateExperimentPage: React.FC = () => {
 
   const handleClusterChange = useCallback(
     (clusterId: string) => {
-      const cluster = MOCK_CLUSTERS.find((c) => c.id === clusterId);
+      const cluster = clusters.find((c) => c.id === clusterId);
       setWizard((prev) => ({
         ...prev,
         clusterId,
-        namespace: cluster?.namespaces.includes('chaos-sec') ? 'chaos-sec' : cluster?.namespaces[0] ?? '',
+        namespace: cluster?.namespaces.includes('chaos-sec')
+          ? 'chaos-sec'
+          : (cluster?.namespaces[0] ?? ''),
       }));
       setFieldErrors((prev) => {
         const { ['step1.cluster']: __, ['step1.namespace']: ___, ...rest } = prev;
         return rest;
       });
     },
-    [],
+    [clusters],
   );
 
   // Reset create status on unmount
@@ -864,7 +1168,8 @@ const CreateExperimentPage: React.FC = () => {
         Select an Attack Template
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Choose a pre-built template that defines the attack scenario, parameters, and expected detections.
+        Choose a pre-built template that defines the attack scenario, parameters, and
+        expected detections.
       </Typography>
 
       {fieldErrors['step0.template'] && (
@@ -893,7 +1198,10 @@ const CreateExperimentPage: React.FC = () => {
             ),
             endAdornment: wizard.templateSearch ? (
               <InputAdornment position="end">
-                <IconButton size="small" onClick={() => updateWizard({ templateSearch: '' })}>
+                <IconButton
+                  size="small"
+                  onClick={() => updateWizard({ templateSearch: '' })}
+                >
                   <ClearIcon sx={{ fontSize: 16 }} />
                 </IconButton>
               </InputAdornment>
@@ -907,7 +1215,11 @@ const CreateExperimentPage: React.FC = () => {
           <Select
             value={wizard.templateCategory}
             label="Category"
-            onChange={(e) => updateWizard({ templateCategory: e.target.value as TemplateCategory | 'all' })}
+            onChange={(e) =>
+              updateWizard({
+                templateCategory: e.target.value as TemplateCategory | 'all',
+              })
+            }
           >
             {CATEGORY_OPTIONS.map((opt) => (
               <MenuItem key={opt.value} value={opt.value}>
@@ -922,7 +1234,11 @@ const CreateExperimentPage: React.FC = () => {
           <Select
             value={wizard.templateSeverity}
             label="Severity"
-            onChange={(e) => updateWizard({ templateSeverity: e.target.value as TemplateSeverity | 'all' })}
+            onChange={(e) =>
+              updateWizard({
+                templateSeverity: e.target.value as TemplateSeverity | 'all',
+              })
+            }
           >
             <MenuItem value="all">All</MenuItem>
             <MenuItem value="low">Low</MenuItem>
@@ -942,7 +1258,13 @@ const CreateExperimentPage: React.FC = () => {
           </Typography>
           <Button
             variant="text"
-            onClick={() => updateWizard({ templateSearch: '', templateCategory: 'all', templateSeverity: 'all' })}
+            onClick={() =>
+              updateWizard({
+                templateSearch: '',
+                templateCategory: 'all',
+                templateSeverity: 'all',
+              })
+            }
             sx={{ mt: 1 }}
           >
             Clear filters
@@ -962,7 +1284,9 @@ const CreateExperimentPage: React.FC = () => {
                     transition: 'all 200ms cubic-bezier(0.4, 0, 0.2, 1)',
                     border: '2px solid',
                     borderColor: isSelected ? 'primary.main' : 'divider',
-                    backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.03)' : 'background.paper',
+                    backgroundColor: isSelected
+                      ? 'rgba(37, 99, 235, 0.03)'
+                      : 'background.paper',
                     '&:hover': {
                       borderColor: isSelected ? 'primary.main' : 'primary.light',
                       transform: 'translateY(-2px)',
@@ -1028,7 +1352,11 @@ const CreateExperimentPage: React.FC = () => {
                             label={template.category}
                             size="small"
                             variant="outlined"
-                            sx={{ height: 20, fontSize: '0.625rem', textTransform: 'capitalize' }}
+                            sx={{
+                              height: 20,
+                              fontSize: '0.625rem',
+                              textTransform: 'capitalize',
+                            }}
                           />
                         </Stack>
                       </Box>
@@ -1052,8 +1380,16 @@ const CreateExperimentPage: React.FC = () => {
                     </Typography>
 
                     {/* Meta */}
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.6875rem' }}>
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.disabled"
+                        sx={{ fontSize: '0.6875rem' }}
+                      >
                         {template.usageCount} uses · v{template.version}
                       </Typography>
                       {template.isOfficial && (
@@ -1069,7 +1405,13 @@ const CreateExperimentPage: React.FC = () => {
                     </Stack>
 
                     {/* Tags */}
-                    <Stack direction="row" spacing={0.5} mt={1.5} flexWrap="wrap" useFlexGap>
+                    <Stack
+                      direction="row"
+                      spacing={0.5}
+                      mt={1.5}
+                      flexWrap="wrap"
+                      useFlexGap
+                    >
                       {template.tags.slice(0, 3).map((tag) => (
                         <Chip
                           key={tag}
@@ -1113,7 +1455,7 @@ const CreateExperimentPage: React.FC = () => {
           Configure Experiment
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Set up the experiment name, target cluster, namespace, and attack parameters.
+          Set the few important options needed to run this test.
         </Typography>
 
         <Grid container spacing={3}>
@@ -1132,7 +1474,9 @@ const CreateExperimentPage: React.FC = () => {
                 }
               }}
               error={Boolean(fieldErrors['step1.name'])}
-              helperText={fieldErrors['step1.name'] || 'Give your experiment a descriptive name'}
+              helperText={
+                fieldErrors['step1.name'] || 'Give your experiment a descriptive name'
+              }
               fullWidth
               required
               placeholder="e.g., DNS Exfil Test - Prod US East"
@@ -1161,7 +1505,7 @@ const CreateExperimentPage: React.FC = () => {
                 label="Target Cluster"
                 onChange={(e) => handleClusterChange(e.target.value)}
               >
-                {MOCK_CLUSTERS.map((cluster) => (
+                {clusters.map((cluster) => (
                   <MenuItem key={cluster.id} value={cluster.id}>
                     <Stack direction="row" spacing={1} alignItems="center">
                       <ClusterIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
@@ -1170,11 +1514,17 @@ const CreateExperimentPage: React.FC = () => {
                           {cluster.name}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {cluster.provider} · {cluster.region} · {cluster.nodeCount} nodes
+                          {cluster.provider} · {cluster.region} · {cluster.nodeCount}{' '}
+                          nodes
                         </Typography>
                       </Box>
                       <Box sx={{ ml: 'auto' }}>
-                        <StatusBadge status={cluster.status} variant="dot" size="small" showLabel={false} />
+                        <StatusBadge
+                          status={cluster.status}
+                          variant="dot"
+                          size="small"
+                          showLabel={false}
+                        />
                       </Box>
                     </Stack>
                   </MenuItem>
@@ -1190,11 +1540,15 @@ const CreateExperimentPage: React.FC = () => {
 
           {/* Namespace */}
           <Grid item xs={12} sm={6}>
-            <FormControl fullWidth required error={Boolean(fieldErrors['step1.namespace'])}>
-              <InputLabel>Namespace</InputLabel>
+            <FormControl
+              fullWidth
+              required
+              error={Boolean(fieldErrors['step1.namespace'])}
+            >
+              <InputLabel>Where to run it</InputLabel>
               <Select
                 value={wizard.namespace}
-                label="Namespace"
+                label="Where to run it"
                 onChange={(e) => {
                   updateWizard({ namespace: e.target.value });
                   setFieldErrors((prev) => {
@@ -1210,7 +1564,12 @@ const CreateExperimentPage: React.FC = () => {
                       <NamespaceIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
                       <Typography variant="body2">{ns}</Typography>
                       {ns === 'chaos-sec' && (
-                        <Chip label="recommended" size="small" color="primary" sx={{ height: 18, fontSize: '0.625rem' }} />
+                        <Chip
+                          label="recommended"
+                          size="small"
+                          color="primary"
+                          sx={{ height: 18, fontSize: '0.625rem' }}
+                        />
                       )}
                     </Stack>
                   </MenuItem>
@@ -1280,19 +1639,53 @@ const CreateExperimentPage: React.FC = () => {
             <Grid item xs={12}>
               <Divider sx={{ mb: 2 }} />
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-                Attack Parameters
+                Important settings
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                Configure the parameters for the {selectedTemplate.name} template.
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: 'block', mb: 2 }}
+              >
+                Fill in the main fields first. Extra settings are hidden unless you need
+                them.
               </Typography>
 
               <Grid container spacing={2}>
-                {selectedTemplate.parameters.map((param) => (
-                  <Grid item xs={12} sm={6} key={param.key}>
-                    {renderParameterField(param)}
-                  </Grid>
-                ))}
+                {selectedTemplate.parameters
+                  .filter((param) => !isAdvancedParameter(param))
+                  .map((param) => (
+                    <Grid item xs={12} sm={6} key={param.key}>
+                      {renderParameterField(param)}
+                    </Grid>
+                  ))}
               </Grid>
+
+              {selectedTemplate.parameters.some((param) =>
+                isAdvancedParameter(param),
+              ) && (
+                <Box sx={{ mt: 2 }}>
+                  <Button
+                    size="small"
+                    onClick={() => setShowAdvancedParameters((prev) => !prev)}
+                    sx={{ textTransform: 'none', fontWeight: 600 }}
+                  >
+                    {showAdvancedParameters
+                      ? 'Hide extra settings'
+                      : 'Show extra settings'}
+                  </Button>
+                  {showAdvancedParameters && (
+                    <Grid container spacing={2} sx={{ mt: 1 }}>
+                      {selectedTemplate.parameters
+                        .filter((param) => isAdvancedParameter(param))
+                        .map((param) => (
+                          <Grid item xs={12} sm={6} key={param.key}>
+                            {renderParameterField(param)}
+                          </Grid>
+                        ))}
+                    </Grid>
+                  )}
+                </Box>
+              )}
             </Grid>
           )}
         </Grid>
@@ -1303,15 +1696,16 @@ const CreateExperimentPage: React.FC = () => {
   const renderParameterField = (param: TemplateParameter) => {
     const value = wizard.parameters[param.key] ?? param.defaultValue;
     const error = fieldErrors[`step1.param.${param.key}`];
+    const display = getParameterCopy(param);
 
     switch (param.type) {
       case 'select':
         return (
           <FormControl fullWidth required={param.required} error={Boolean(error)}>
-            <InputLabel>{param.label}</InputLabel>
+            <InputLabel>{display.label}</InputLabel>
             <Select
               value={String(value)}
-              label={param.label}
+              label={display.label}
               onChange={(e) => handleParameterChange(param.key, e.target.value)}
             >
               {param.options?.map((opt) => (
@@ -1320,10 +1714,18 @@ const CreateExperimentPage: React.FC = () => {
                 </MenuItem>
               ))}
             </Select>
-            {error && <Typography variant="caption" color="error" sx={{ mt: 0.5, ml: 2 }}>{error}</Typography>}
-            {!error && param.description && (
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, ml: 2, display: 'block' }}>
-                {param.description}
+            {error && (
+              <Typography variant="caption" color="error" sx={{ mt: 0.5, ml: 2 }}>
+                {error}
+              </Typography>
+            )}
+            {!error && display.description && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 0.5, ml: 2, display: 'block' }}
+              >
+                {display.description}
               </Typography>
             )}
           </FormControl>
@@ -1343,11 +1745,15 @@ const CreateExperimentPage: React.FC = () => {
               label={
                 <Box>
                   <Typography variant="body2" fontWeight={500}>
-                    {param.label}
+                    {display.label}
                   </Typography>
-                  {param.description && (
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                      {param.description}
+                  {display.description && (
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: 'block' }}
+                    >
+                      {display.description}
                     </Typography>
                   )}
                 </Box>
@@ -1360,10 +1766,11 @@ const CreateExperimentPage: React.FC = () => {
         return (
           <Box>
             <Typography variant="body2" fontWeight={500} sx={{ mb: 0.5 }}>
-              {param.label} {param.required && '*'}
+              {display.label} {param.required && '*'}
             </Typography>
-            {param.validation?.min !== undefined && param.validation?.max !== undefined &&
-             param.validation.max - param.validation.min <= 100 ? (
+            {param.validation?.min !== undefined &&
+            param.validation?.max !== undefined &&
+            param.validation.max - param.validation.min <= 100 ? (
               <Box sx={{ px: 1 }}>
                 <Slider
                   value={Number(value)}
@@ -1371,7 +1778,9 @@ const CreateExperimentPage: React.FC = () => {
                   min={param.validation.min}
                   max={param.validation.max}
                   valueLabelDisplay="auto"
-                  valueLabelFormat={(v) => `${v}${param.key.toLowerCase().includes('interval') || param.key.toLowerCase().includes('duration') ? 's' : ''}`}
+                  valueLabelFormat={(v) =>
+                    `${v}${param.key.toLowerCase().includes('interval') || param.key.toLowerCase().includes('duration') || param.key.toLowerCase().includes('timeout') ? 's' : ''}`
+                  }
                   marks={[
                     { value: param.validation.min, label: String(param.validation.min) },
                     { value: param.validation.max, label: String(param.validation.max) },
@@ -1387,7 +1796,7 @@ const CreateExperimentPage: React.FC = () => {
                 size="small"
                 required={param.required}
                 error={Boolean(error)}
-                helperText={error || param.description}
+                helperText={error || display.description}
                 InputProps={{
                   inputProps: {
                     min: param.validation?.min,
@@ -1402,14 +1811,14 @@ const CreateExperimentPage: React.FC = () => {
       default: // string
         return (
           <TextField
-            label={param.label}
+            label={display.label}
             value={String(value)}
             onChange={(e) => handleParameterChange(param.key, e.target.value)}
             fullWidth
             required={param.required}
             error={Boolean(error)}
-            helperText={error || param.description}
-            placeholder={`Enter ${param.label.toLowerCase()}`}
+            helperText={error || display.description}
+            placeholder={`Enter ${display.label.toLowerCase()}`}
           />
         );
     }
@@ -1421,13 +1830,18 @@ const CreateExperimentPage: React.FC = () => {
         Validation Settings
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Define how the SIEM should validate the security control detection for this experiment.
+        Define how the SIEM should validate the security control detection for this
+        experiment.
       </Typography>
 
       <Grid container spacing={3}>
         {/* SIEM Alert Type */}
         <Grid item xs={12} sm={6}>
-          <FormControl fullWidth required error={Boolean(fieldErrors['step2.siemAlertType'])}>
+          <FormControl
+            fullWidth
+            required
+            error={Boolean(fieldErrors['step2.siemAlertType'])}
+          >
             <InputLabel>Expected SIEM Alert Type</InputLabel>
             <Select
               value={wizard.siemAlertType}
@@ -1463,7 +1877,9 @@ const CreateExperimentPage: React.FC = () => {
             label="Expected Alert Count"
             type="number"
             value={wizard.expectedAlertCount}
-            onChange={(e) => updateWizard({ expectedAlertCount: Math.max(1, Number(e.target.value)) })}
+            onChange={(e) =>
+              updateWizard({ expectedAlertCount: Math.max(1, Number(e.target.value)) })
+            }
             fullWidth
             InputProps={{
               inputProps: { min: 1, max: 50 },
@@ -1482,13 +1898,19 @@ const CreateExperimentPage: React.FC = () => {
           <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
             Detection Time Window
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: 'block', mb: 2 }}
+          >
             Maximum time to wait for SIEM alerts after the attack is executed.
           </Typography>
           <Box sx={{ px: 1 }}>
             <Slider
               value={wizard.timeWindowSeconds}
-              onChange={(_, value) => updateWizard({ timeWindowSeconds: value as number })}
+              onChange={(_, value) =>
+                updateWizard({ timeWindowSeconds: value as number })
+              }
               min={30}
               max={3600}
               step={30}
@@ -1508,7 +1930,8 @@ const CreateExperimentPage: React.FC = () => {
             />
             <Stack direction="row" justifyContent="space-between" mt={1}>
               <Typography variant="caption" color="text.secondary">
-                Selected: {wizard.timeWindowSeconds >= 3600
+                Selected:{' '}
+                {wizard.timeWindowSeconds >= 3600
                   ? `${(wizard.timeWindowSeconds / 3600).toFixed(1)}h`
                   : wizard.timeWindowSeconds >= 60
                     ? `${Math.floor(wizard.timeWindowSeconds / 60)}m ${wizard.timeWindowSeconds % 60 > 0 ? `${wizard.timeWindowSeconds % 60}s` : ''}`
@@ -1516,9 +1939,16 @@ const CreateExperimentPage: React.FC = () => {
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 {wizard.timeWindowSeconds < 300 ? (
-                  <Stack direction="row" spacing={0.5} alignItems="center" component="span">
+                  <Stack
+                    direction="row"
+                    spacing={0.5}
+                    alignItems="center"
+                    component="span"
+                  >
                     <WarningIcon sx={{ fontSize: 14, color: 'warning.main' }} />
-                    <span style={{ color: theme.palette.warning.main }}>Short window may miss delayed detections</span>
+                    <span style={{ color: theme.palette.warning.main }}>
+                      Short window may miss delayed detections
+                    </span>
                   </Stack>
                 ) : null}
               </Typography>
@@ -1578,22 +2008,46 @@ const CreateExperimentPage: React.FC = () => {
               </Stack>
 
               {Object.keys(wizard.customRules).length > 0 ? (
-                <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 1.5 }}>
+                <TableContainer
+                  component={Paper}
+                  variant="outlined"
+                  sx={{ borderRadius: 1.5 }}
+                >
                   <Table size="small">
                     <TableHead>
                       <TableRow>
                         <TableCell>Key</TableCell>
                         <TableCell>Value</TableCell>
-                        <TableCell width={60} align="center">Action</TableCell>
+                        <TableCell width={60} align="center">
+                          Action
+                        </TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {Object.entries(wizard.customRules).map(([key, val]) => (
                         <TableRow key={key}>
-                          <TableCell><Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{key}</Typography></TableCell>
-                          <TableCell><Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{val}</Typography></TableCell>
+                          <TableCell>
+                            <Typography
+                              variant="body2"
+                              sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                            >
+                              {key}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography
+                              variant="body2"
+                              sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                            >
+                              {val}
+                            </Typography>
+                          </TableCell>
                           <TableCell align="center">
-                            <IconButton size="small" color="error" onClick={() => handleRemoveCustomRule(key)}>
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => handleRemoveCustomRule(key)}
+                            >
                               <ClearIcon sx={{ fontSize: 16 }} />
                             </IconButton>
                           </TableCell>
@@ -1603,7 +2057,11 @@ const CreateExperimentPage: React.FC = () => {
                   </Table>
                 </TableContainer>
               ) : (
-                <Typography variant="caption" color="text.disabled" sx={{ display: 'block', textAlign: 'center', py: 2 }}>
+                <Typography
+                  variant="caption"
+                  color="text.disabled"
+                  sx={{ display: 'block', textAlign: 'center', py: 2 }}
+                >
                   No custom rules added yet
                 </Typography>
               )}
@@ -1621,13 +2079,26 @@ const CreateExperimentPage: React.FC = () => {
             <Stack spacing={1}>
               {selectedTemplate.expectedDetections.map((det, idx) => (
                 <Paper key={idx} variant="outlined" sx={{ p: 1.5, borderRadius: 1.5 }}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                  >
                     <Box>
                       <Stack direction="row" spacing={1} alignItems="center" mb={0.5}>
                         <Typography variant="body2" fontWeight={600}>
                           {det.source}
                         </Typography>
-                        <Chip label={det.type} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.625rem', fontFamily: 'monospace' }} />
+                        <Chip
+                          label={det.type}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            height: 20,
+                            fontSize: '0.625rem',
+                            fontFamily: 'monospace',
+                          }}
+                        />
                       </Stack>
                       <Typography variant="caption" color="text.secondary">
                         {det.description}
@@ -1639,8 +2110,18 @@ const CreateExperimentPage: React.FC = () => {
                       sx={{
                         height: 22,
                         fontSize: '0.6875rem',
-                        color: det.confidence >= 0.8 ? 'success.main' : det.confidence >= 0.5 ? 'warning.main' : 'error.main',
-                        backgroundColor: det.confidence >= 0.8 ? 'rgba(16,185,129,0.08)' : det.confidence >= 0.5 ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)',
+                        color:
+                          det.confidence >= 0.8
+                            ? 'success.main'
+                            : det.confidence >= 0.5
+                              ? 'warning.main'
+                              : 'error.main',
+                        backgroundColor:
+                          det.confidence >= 0.8
+                            ? 'rgba(16,185,129,0.08)'
+                            : det.confidence >= 0.5
+                              ? 'rgba(245,158,11,0.08)'
+                              : 'rgba(239,68,68,0.08)',
                       }}
                     />
                   </Stack>
@@ -1676,34 +2157,68 @@ const CreateExperimentPage: React.FC = () => {
           <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2, height: '100%' }}>
             <Stack direction="row" spacing={1} alignItems="center" mb={2}>
               <TemplateIcon sx={{ fontSize: 20, color: 'primary.main' }} />
-              <Typography variant="subtitle2" fontWeight={700}>Template</Typography>
+              <Typography variant="subtitle2" fontWeight={700}>
+                Template
+              </Typography>
             </Stack>
             {selectedTemplate ? (
               <Stack spacing={1.5}>
                 <Stack direction="row" spacing={1.5} alignItems="center">
                   <Avatar
                     variant="rounded"
-                    sx={{ width: 40, height: 40, fontSize: '1.25rem', backgroundColor: `${SEVERITY_COLORS[selectedTemplate.severity]}14` }}
+                    sx={{
+                      width: 40,
+                      height: 40,
+                      fontSize: '1.25rem',
+                      backgroundColor: `${SEVERITY_COLORS[selectedTemplate.severity]}14`,
+                    }}
                   >
                     {selectedTemplate.icon}
                   </Avatar>
                   <Box>
-                    <Typography variant="body2" fontWeight={700}>{selectedTemplate.name}</Typography>
+                    <Typography variant="body2" fontWeight={700}>
+                      {selectedTemplate.name}
+                    </Typography>
                     <Stack direction="row" spacing={0.5} mt={0.25}>
-                      <Chip label={selectedTemplate.severity} size="small" sx={{ height: 20, fontSize: '0.625rem', color: SEVERITY_COLORS[selectedTemplate.severity], backgroundColor: `${SEVERITY_COLORS[selectedTemplate.severity]}14` }} />
-                      <Chip label={selectedTemplate.category} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.625rem', textTransform: 'capitalize' }} />
+                      <Chip
+                        label={selectedTemplate.severity}
+                        size="small"
+                        sx={{
+                          height: 20,
+                          fontSize: '0.625rem',
+                          color: SEVERITY_COLORS[selectedTemplate.severity],
+                          backgroundColor: `${SEVERITY_COLORS[selectedTemplate.severity]}14`,
+                        }}
+                      />
+                      <Chip
+                        label={selectedTemplate.category}
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          height: 20,
+                          fontSize: '0.625rem',
+                          textTransform: 'capitalize',
+                        }}
+                      />
                     </Stack>
                   </Box>
                 </Stack>
-                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem' }}>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ fontSize: '0.8125rem' }}
+                >
                   {selectedTemplate.description}
                 </Typography>
                 <Typography variant="caption" color="text.disabled">
-                  {selectedTemplate.attackPhases.length} phases · {selectedTemplate.expectedDetections.length} expected detections
+                  {selectedTemplate.attackPhases.length} phases ·{' '}
+                  {selectedTemplate.expectedDetections.length} expected detections
                 </Typography>
               </Stack>
             ) : (
-              <Typography variant="body2" color="error">No template selected</Typography>
+              <Typography variant="body2" color="error">
+                No template selected
+              </Typography>
             )}
           </Paper>
         </Grid>
@@ -1713,41 +2228,90 @@ const CreateExperimentPage: React.FC = () => {
           <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2, height: '100%' }}>
             <Stack direction="row" spacing={1} alignItems="center" mb={2}>
               <ConfigIcon sx={{ fontSize: 20, color: 'primary.main' }} />
-              <Typography variant="subtitle2" fontWeight={700}>Configuration</Typography>
+              <Typography variant="subtitle2" fontWeight={700}>
+                Configuration
+              </Typography>
             </Stack>
             <Stack spacing={1.5}>
               <Box>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>Name</Typography>
-                <Typography variant="body2" fontWeight={600}>{wizard.name}</Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: 'block' }}
+                >
+                  Name
+                </Typography>
+                <Typography variant="body2" fontWeight={600}>
+                  {wizard.name}
+                </Typography>
               </Box>
               {wizard.description && (
                 <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>Description</Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block' }}
+                  >
+                    Description
+                  </Typography>
                   <Typography variant="body2">{wizard.description}</Typography>
                 </Box>
               )}
               <Divider />
               <Stack direction="row" spacing={3}>
                 <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>Cluster</Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block' }}
+                  >
+                    Cluster
+                  </Typography>
                   <Stack direction="row" spacing={0.5} alignItems="center">
                     <ClusterIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                    <Typography variant="body2" fontWeight={500}>{selectedCluster?.name ?? '—'}</Typography>
+                    <Typography variant="body2" fontWeight={500}>
+                      {selectedCluster?.name ?? '—'}
+                    </Typography>
                   </Stack>
                 </Box>
                 <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>Namespace</Typography>
-                  <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{wizard.namespace || '—'}</Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block' }}
+                  >
+                    Namespace
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                  >
+                    {wizard.namespace || '—'}
+                  </Typography>
                 </Box>
               </Stack>
               {Object.keys(wizard.parameters).length > 0 && (
                 <>
                   <Divider />
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>Parameters</Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mb: 0.5 }}
+                  >
+                    Parameters
+                  </Typography>
                   <Stack spacing={0.5}>
                     {Object.entries(wizard.parameters).map(([key, value]) => (
                       <Stack key={key} direction="row" spacing={1}>
-                        <Typography variant="caption" fontWeight={600} sx={{ fontFamily: 'monospace', minWidth: 140, color: 'text.secondary' }}>
+                        <Typography
+                          variant="caption"
+                          fontWeight={600}
+                          sx={{
+                            fontFamily: 'monospace',
+                            minWidth: 140,
+                            color: 'text.secondary',
+                          }}
+                        >
                           {key}:
                         </Typography>
                         <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
@@ -1763,7 +2327,13 @@ const CreateExperimentPage: React.FC = () => {
                   <Divider />
                   <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                     {wizard.tags.map((tag) => (
-                      <Chip key={tag} label={tag} size="small" variant="outlined" sx={{ fontSize: '0.6875rem' }} />
+                      <Chip
+                        key={tag}
+                        label={tag}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontSize: '0.6875rem' }}
+                      />
                     ))}
                   </Stack>
                 </>
@@ -1777,17 +2347,39 @@ const CreateExperimentPage: React.FC = () => {
           <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2 }}>
             <Stack direction="row" spacing={1} alignItems="center" mb={2}>
               <ValidationIcon sx={{ fontSize: 20, color: 'primary.main' }} />
-              <Typography variant="subtitle2" fontWeight={700}>Validation Settings</Typography>
+              <Typography variant="subtitle2" fontWeight={700}>
+                Validation Settings
+              </Typography>
             </Stack>
             <Grid container spacing={2}>
               <Grid item xs={12} sm={4}>
-                <Box sx={{ textAlign: 'center', p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
-                  <Typography variant="h5" fontWeight={700} color="primary.main">{wizard.expectedAlertCount}</Typography>
-                  <Typography variant="caption" color="text.secondary">Expected Alerts</Typography>
+                <Box
+                  sx={{
+                    textAlign: 'center',
+                    p: 1.5,
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Typography variant="h5" fontWeight={700} color="primary.main">
+                    {wizard.expectedAlertCount}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Expected Alerts
+                  </Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} sm={4}>
-                <Box sx={{ textAlign: 'center', p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+                <Box
+                  sx={{
+                    textAlign: 'center',
+                    p: 1.5,
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                  }}
+                >
                   <Typography variant="h5" fontWeight={700} color="primary.main">
                     {wizard.timeWindowSeconds >= 3600
                       ? `${(wizard.timeWindowSeconds / 3600).toFixed(1)}h`
@@ -1795,24 +2387,53 @@ const CreateExperimentPage: React.FC = () => {
                         ? `${Math.floor(wizard.timeWindowSeconds / 60)}m`
                         : `${wizard.timeWindowSeconds}s`}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary">Time Window</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Time Window
+                  </Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} sm={4}>
-                <Box sx={{ textAlign: 'center', p: 1.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
-                  <Typography variant="body2" fontWeight={700} color="primary.main" sx={{ fontSize: '1rem', lineHeight: 1.6 }}>
+                <Box
+                  sx={{
+                    textAlign: 'center',
+                    p: 1.5,
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    fontWeight={700}
+                    color="primary.main"
+                    sx={{ fontSize: '1rem', lineHeight: 1.6 }}
+                  >
                     {wizard.siemAlertType || '—'}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary">Alert Type</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Alert Type
+                  </Typography>
                 </Box>
               </Grid>
             </Grid>
             {wizard.enableCustomRules && Object.keys(wizard.customRules).length > 0 && (
               <Box sx={{ mt: 2 }}>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>Custom Rules</Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: 'block', mb: 0.5 }}
+                >
+                  Custom Rules
+                </Typography>
                 <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                   {Object.entries(wizard.customRules).map(([key, val]) => (
-                    <Chip key={key} label={`${key}=${val}`} size="small" variant="outlined" sx={{ fontSize: '0.6875rem', fontFamily: 'monospace' }} />
+                    <Chip
+                      key={key}
+                      label={`${key}=${val}`}
+                      size="small"
+                      variant="outlined"
+                      sx={{ fontSize: '0.6875rem', fontFamily: 'monospace' }}
+                    />
                   ))}
                 </Stack>
               </Box>
@@ -1892,7 +2513,11 @@ const CreateExperimentPage: React.FC = () => {
                         fontSize: '0.875rem',
                       }}
                     >
-                      {activeStep > index ? <CheckIcon sx={{ fontSize: 20 }} /> : step.icon}
+                      {activeStep > index ? (
+                        <CheckIcon sx={{ fontSize: 20 }} />
+                      ) : (
+                        step.icon
+                      )}
                     </Avatar>
                   )}
                 >
@@ -1953,9 +2578,10 @@ const CreateExperimentPage: React.FC = () => {
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            backgroundColor: theme.palette.mode === 'dark'
-              ? 'rgba(15, 23, 42, 0.4)'
-              : 'rgba(248, 250, 252, 0.6)',
+            backgroundColor:
+              theme.palette.mode === 'dark'
+                ? 'rgba(15, 23, 42, 0.4)'
+                : 'rgba(248, 250, 252, 0.6)',
           }}
         >
           <Button
@@ -2017,17 +2643,14 @@ const CreateExperimentPage: React.FC = () => {
           severity="success"
           sx={{ mt: 3, borderRadius: 2 }}
           action={
-            <Button
-              color="inherit"
-              size="small"
-              onClick={() => navigate('/experiments')}
-            >
+            <Button color="inherit" size="small" onClick={() => navigate('/experiments')}>
               View All
             </Button>
           }
         >
           <AlertTitle>Experiment Created!</AlertTitle>
-          Your experiment has been created successfully. You will be redirected to the experiment detail page.
+          Your experiment has been created successfully. You will be redirected to the
+          experiment detail page.
         </Alert>
       )}
     </Box>

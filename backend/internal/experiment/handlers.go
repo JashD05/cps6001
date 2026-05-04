@@ -1,12 +1,15 @@
 package experiment
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/chaos-sec/backend/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -25,6 +29,13 @@ type Handler struct {
 	rdb    *redis.Client
 	cfg    *config.Config
 	logger *zap.Logger
+	engine *Engine // Optional: set via SetEngine for coordinated stop support
+}
+
+// SetEngine sets the experiment engine on the handler, enabling coordinated
+// stop support (context cancellation + K8s cleanup) when stopping experiments.
+func (h *Handler) SetEngine(engine *Engine) {
+	h.engine = engine
 }
 
 // NewHandler creates a new experiment handler with the provided dependencies.
@@ -85,6 +96,12 @@ func (h *Handler) ListExperiments(c *gin.Context) {
 		argIdx++
 	}
 
+	if query.ClusterID != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("EXISTS (SELECT 1 FROM experiment_runs er WHERE er.experiment_id = e.id AND er.cluster_id = $%d)", argIdx))
+		args = append(args, query.ClusterID)
+		argIdx++
+	}
+
 	// Non-admin users can only see their own org's experiments (already filtered by org_id)
 	// but we also enforce organization isolation at the query level.
 
@@ -132,9 +149,21 @@ func (h *Handler) ListExperiments(c *gin.Context) {
 		SELECT e.id, e.organization_id, e.name, e.description, e.status,
 		       e.created_by, e.schedule_cron, e.auto_cleanup,
 		       e.notification_config, e.created_at, e.updated_at,
-		       u.name as creator_name
+		       u.name as creator_name,
+		       lr.status as latest_run_status,
+		       lr.result_summary as latest_run_result_summary,
+		       lr.started_at as latest_run_started_at,
+		       lr.completed_at as latest_run_completed_at,
+		       lr.duration_ms as latest_run_duration_ms
 		FROM experiments e
 		LEFT JOIN users u ON u.id = e.created_by
+		LEFT JOIN LATERAL (
+			SELECT er.status, er.result_summary, er.started_at, er.completed_at, er.duration_ms
+			FROM experiment_runs er
+			WHERE er.experiment_id = e.id
+			ORDER BY er.created_at DESC
+			LIMIT 1
+		) lr ON true
 		WHERE %s
 		ORDER BY %s %s
 		LIMIT $%d OFFSET $%d
@@ -156,7 +185,12 @@ func (h *Handler) ListExperiments(c *gin.Context) {
 
 	type experimentListItem struct {
 		models.Experiment
-		CreatorName string `json:"creator_name,omitempty"`
+		CreatorName            string          `json:"creator_name,omitempty"`
+		LatestRunStatus        string          `json:"latest_run_status,omitempty"`
+		LatestRunResultSummary json.RawMessage `json:"latest_run_result_summary,omitempty"`
+		LatestRunStartedAt     *time.Time      `json:"latest_run_started_at,omitempty"`
+		LatestRunCompletedAt   *time.Time      `json:"latest_run_completed_at,omitempty"`
+		LatestRunDurationMs    *int64          `json:"latest_run_duration_ms,omitempty"`
 	}
 
 	experiments := make([]experimentListItem, 0)
@@ -165,12 +199,19 @@ func (h *Handler) ListExperiments(c *gin.Context) {
 		var creatorName sql.NullString
 		var scheduleCron sql.NullString
 		var description sql.NullString
+		var latestRunStatus sql.NullString
+		var latestRunResultSummary sql.NullString
+		var latestRunStartedAt sql.NullTime
+		var latestRunCompletedAt sql.NullTime
+		var latestRunDurationMs sql.NullInt64
 
 		err := rows.Scan(
 			&exp.ID, &exp.OrganizationID, &exp.Name, &description,
 			&exp.Status, &exp.CreatedBy, &scheduleCron,
 			&exp.AutoCleanup, &exp.NotificationConfig,
 			&exp.CreatedAt, &exp.UpdatedAt, &creatorName,
+			&latestRunStatus, &latestRunResultSummary,
+			&latestRunStartedAt, &latestRunCompletedAt, &latestRunDurationMs,
 		)
 		if err != nil {
 			h.logger.Error("failed to scan experiment row", zap.Error(err))
@@ -190,8 +231,24 @@ func (h *Handler) ListExperiments(c *gin.Context) {
 		}
 
 		item := experimentListItem{
-			Experiment:  exp,
-			CreatorName: creatorName.String,
+			Experiment:           exp,
+			CreatorName:          creatorName.String,
+			LatestRunStatus:      latestRunStatus.String,
+			LatestRunStartedAt:   nil,
+			LatestRunCompletedAt: nil,
+			LatestRunDurationMs:  nil,
+		}
+		if latestRunResultSummary.Valid {
+			item.LatestRunResultSummary = json.RawMessage(latestRunResultSummary.String)
+		}
+		if latestRunStartedAt.Valid {
+			item.LatestRunStartedAt = &latestRunStartedAt.Time
+		}
+		if latestRunCompletedAt.Valid {
+			item.LatestRunCompletedAt = &latestRunCompletedAt.Time
+		}
+		if latestRunDurationMs.Valid {
+			item.LatestRunDurationMs = &latestRunDurationMs.Int64
 		}
 		experiments = append(experiments, item)
 	}
@@ -297,7 +354,10 @@ func (h *Handler) GetExperiment(c *gin.Context) {
 		exp.Runs = runs
 	}
 
-	c.JSON(http.StatusOK, exp)
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    exp,
+	})
 }
 
 // CreateExperiment creates a new experiment from the provided configuration.
@@ -400,7 +460,7 @@ func (h *Handler) CreateExperiment(c *gin.Context) {
 
 	err = tx.QueryRowContext(c.Request.Context(), `
 		INSERT INTO experiments (organization_id, name, description, status, created_by, schedule_cron, auto_cleanup, notification_config)
-		VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7)
+		VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7)
 		RETURNING id, organization_id, name, description, status, created_by, schedule_cron, auto_cleanup, notification_config, created_at, updated_at
 	`,
 		claims.OrganizationID, req.Name, nilIfEmpty(req.Description), claims.UserID,
@@ -464,6 +524,7 @@ func (h *Handler) CreateExperiment(c *gin.Context) {
 		}
 
 		var et models.ExperimentTemplate
+		var targetNamespacesOut pq.StringArray
 		err = tx.QueryRowContext(c.Request.Context(), `
 			INSERT INTO experiment_templates (experiment_id, attack_template_id, order_index, configuration,
 				target_namespaces, target_labels, duration_seconds, cleanup_policy, siem_validation, enabled)
@@ -477,10 +538,13 @@ func (h *Handler) CreateExperiment(c *gin.Context) {
 		).Scan(
 			&et.ID, &et.ExperimentID, &et.AttackTemplateID,
 			&et.OrderIndex, &et.Configuration,
-			&et.TargetNamespaces, &et.TargetLabels,
+			&targetNamespacesOut, &et.TargetLabels,
 			&et.DurationSeconds, &et.CleanupPolicy,
 			&et.SIEMValidation, &et.Enabled, &et.CreatedAt,
 		)
+		if err == nil {
+			et.TargetNamespaces = []string(targetNamespacesOut)
+		}
 		if err != nil {
 			h.logger.Error("failed to insert experiment template", zap.Error(err), zap.Int("index", i))
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
@@ -515,7 +579,10 @@ func (h *Handler) CreateExperiment(c *gin.Context) {
 		zap.Int("template_count", len(createdTemplates)),
 	)
 
-	c.JSON(http.StatusCreated, exp)
+	c.JSON(http.StatusCreated, models.APIResponse{
+		Success: true,
+		Data:    exp,
+	})
 }
 
 // UpdateExperiment updates an existing experiment's configuration.
@@ -693,11 +760,12 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 		return
 	}
 
-	clusterID, err := uuid.Parse(req.ClusterID)
+	clusterID, err := h.resolveExecutionClusterID(c.Request.Context(), claims.OrganizationID, req.ClusterID)
 	if err != nil {
+		h.logger.Error("failed to resolve execution cluster", zap.Error(err))
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error:   "invalid_cluster_id",
-			Message: "Invalid cluster ID format.",
+			Error:   "cluster_not_found",
+			Message: "No connected Kubernetes cluster is available for this experiment.",
 			Code:    http.StatusBadRequest,
 		})
 		return
@@ -728,10 +796,22 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 		return
 	}
 
-	if expStatus != "draft" && expStatus != "active" {
+	switch expStatus {
+	case "draft", "active", "pending", "queued":
+		// Valid states for execution — experiment has not yet been run or is idle
+	case "stopped", "completed", "failed", "timed_out", "archived":
+		// Terminal states — re-run allowed
+	case "running":
 		c.JSON(http.StatusConflict, models.ErrorResponse{
 			Error:   "conflict",
-			Message: fmt.Sprintf("Experiment is in '%s' status and cannot be executed. Only draft or active experiments can be run.", expStatus),
+			Message: "Experiment is currently running. Stop it first, or wait for it to complete.",
+			Code:    http.StatusConflict,
+		})
+		return
+	default:
+		c.JSON(http.StatusConflict, models.ErrorResponse{
+			Error:   "conflict",
+			Message: fmt.Sprintf("Experiment is in '%s' status and cannot be executed.", expStatus),
 			Code:    http.StatusConflict,
 		})
 		return
@@ -770,41 +850,93 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 		return
 	}
 
-	// Check if there is already a running experiment on this cluster
-	var runningCount int
-	err = h.db.QueryRowContext(c.Request.Context(), `
-		SELECT COUNT(*) FROM experiment_runs er
-		JOIN experiments e ON e.id = er.experiment_id
-		WHERE er.cluster_id = $1 AND e.organization_id = $2 AND er.status = 'running'
-	`, clusterID, claims.OrganizationID).Scan(&runningCount)
+	// Expire stale runs: mark any "running" or "pending" runs that have exceeded
+	// the pod timeout as "timed_out" so they no longer block the concurrency check.
+	staleCutoff := time.Now().Add(-h.cfg.Kubernetes.PodTimeout)
+	_, err = h.db.ExecContext(c.Request.Context(), `
+		UPDATE experiment_runs
+		SET status = 'timed_out', completed_at = NOW(),
+		    error_message = 'Run exceeded pod timeout and was automatically expired'
+		WHERE status IN ('running', 'pending')
+		  AND started_at IS NOT NULL
+		  AND started_at < $1
+	`, staleCutoff)
 	if err != nil {
-		h.logger.Error("failed to check running experiments", zap.Error(err))
+		h.logger.Error("failed to expire stale experiment runs", zap.Error(err))
 		// Non-fatal: continue with execution
 	}
 
-	if runningCount >= h.cfg.Kubernetes.MaxConcurrent {
+	// Also expire pending runs that never started (no started_at) but have been
+	// queued for longer than the pod timeout.
+	_, err = h.db.ExecContext(c.Request.Context(), `
+		UPDATE experiment_runs
+		SET status = 'timed_out', completed_at = NOW(),
+		    error_message = 'Run was never picked up by a worker and was automatically expired'
+		WHERE status = 'pending'
+		  AND started_at IS NULL
+		  AND created_at < $1
+	`, staleCutoff)
+	if err != nil {
+		h.logger.Error("failed to expire stale pending experiment runs", zap.Error(err))
+		// Non-fatal: continue with execution
+	}
+
+	// Also expire runs whose cluster is no longer connected. Without this,
+	// experiments whose clusters were deleted or disconnected permanently
+	// occupy concurrency slots, causing "maximum concurrent reached" errors
+	// on an otherwise idle system.
+	_, err = h.db.ExecContext(c.Request.Context(), `
+		UPDATE experiment_runs
+		SET status = 'timed_out', completed_at = NOW(),
+		    error_message = 'Cluster is no longer connected; run was automatically expired'
+		WHERE status IN ('running', 'pending', 'queued')
+		  AND cluster_id NOT IN (
+		    SELECT id FROM kubernetes_clusters WHERE status = 'connected'
+		  )
+	`)
+	if err != nil {
+		h.logger.Error("failed to expire runs on disconnected clusters", zap.Error(err))
+		// Non-fatal: continue with execution
+	}
+
+	// Enforce concurrency limit: count active (running, pending, or queued) runs
+	// on the target cluster and reject if the limit is exceeded. This prevents
+	// overwhelming the system and provides clear feedback to the user.
+	var activeRunCount int
+	err = h.db.QueryRowContext(c.Request.Context(), `
+		SELECT COUNT(*) FROM experiment_runs
+		WHERE cluster_id = $1
+		  AND status IN ('running', 'pending', 'queued')
+	`, clusterID).Scan(&activeRunCount)
+	if err != nil {
+		h.logger.Warn("failed to count active runs for concurrency check", zap.Error(err))
+		// Non-fatal: fall through and allow submission
+	} else if activeRunCount >= h.cfg.Kubernetes.MaxConcurrent {
 		c.JSON(http.StatusConflict, models.ErrorResponse{
-			Error:   "max_concurrent_reached",
-			Message: fmt.Sprintf("Maximum concurrent experiments (%d) reached on this cluster. Please wait for running experiments to complete.", h.cfg.Kubernetes.MaxConcurrent),
+			Error:   "concurrency_limit",
+			Message: fmt.Sprintf("Maximum concurrent experiments reached on this cluster (%d active / %d limit). Please wait for running experiments to complete or increase the CHAOS_K8S_MAX_CONCURRENT limit.", activeRunCount, h.cfg.Kubernetes.MaxConcurrent),
 			Code:    http.StatusConflict,
 		})
 		return
 	}
-
 	// Calculate the next run number
 	var maxRunNumber sql.NullInt64
-	err = h.db.QueryRowContext(c.Request.Context(),
+	if qerr := h.db.QueryRowContext(c.Request.Context(),
 		"SELECT MAX(run_number) FROM experiment_runs WHERE experiment_id = $1",
 		experimentID,
-	).Scan(&maxRunNumber)
+	).Scan(&maxRunNumber); qerr != nil && qerr != sql.ErrNoRows {
+		h.logger.Warn("failed to query max run number, defaulting to 1", zap.Error(qerr))
+	}
 
 	nextRunNumber := 1
 	if maxRunNumber.Valid {
 		nextRunNumber = int(maxRunNumber.Int64) + 1
 	}
 
-	// Transition experiment to active status if it's still draft
-	if expStatus == "draft" {
+	// Transition experiment to active status if it's not already active.
+	// Covers draft, pending, archived (never run or previously archived),
+	// and all terminal states (stopped, completed, failed, timed_out) for re-runs.
+	if expStatus != "active" {
 		_, err = h.db.ExecContext(c.Request.Context(),
 			"UPDATE experiments SET status = 'active', updated_at = NOW() WHERE id = $1",
 			experimentID,
@@ -819,20 +951,21 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 	now := time.Now()
 	var run models.ExperimentRun
 	var errorMessage sql.NullString
+	var resultSummary sql.NullString
 
 	err = h.db.QueryRowContext(c.Request.Context(), `
-		INSERT INTO experiment_runs (experiment_id, cluster_id, run_number, status, triggered_by, trigger_type, started_at)
-		VALUES ($1, $2, $3, 'running', $4, 'manual', $5)
+		INSERT INTO experiment_runs (experiment_id, cluster_id, run_number, status, triggered_by, trigger_type)
+		VALUES ($1, $2, $3, 'pending', $4, 'manual')
 		RETURNING id, experiment_id, cluster_id, run_number, status, triggered_by, trigger_type,
 		          started_at, completed_at, duration_ms, result_summary, error_message,
 		          cleanup_status, created_at
 	`,
-		experimentID, clusterID, nextRunNumber, claims.UserID, now,
+		experimentID, clusterID, nextRunNumber, claims.UserID,
 	).Scan(
 		&run.ID, &run.ExperimentID, &run.ClusterID, &run.RunNumber,
 		&run.Status, &run.TriggeredBy, &run.TriggerType,
 		&run.StartedAt, &run.CompletedAt, &run.DurationMs,
-		&run.ResultSummary, &errorMessage, &run.CleanupStatus, &run.CreatedAt,
+		&resultSummary, &errorMessage, &run.CleanupStatus, &run.CreatedAt,
 	)
 	if err != nil {
 		h.logger.Error("failed to create experiment run", zap.Error(err))
@@ -844,6 +977,9 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 		return
 	}
 
+	if resultSummary.Valid {
+		run.ResultSummary = json.RawMessage(resultSummary.String)
+	}
 	if errorMessage.Valid {
 		run.ErrorMessage = &errorMessage.String
 	}
@@ -880,7 +1016,10 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 		zap.String("triggered_by", claims.UserID.String()),
 	)
 
-	c.JSON(http.StatusAccepted, run)
+	c.JSON(http.StatusAccepted, models.APIResponse{
+		Success: true,
+		Data:    run,
+	})
 }
 
 // StopExperiment cancels a currently running experiment.
@@ -915,7 +1054,54 @@ func (h *Handler) StopExperiment(c *gin.Context) {
 		return
 	}
 
-	// Find the currently running experiment run
+	// -----------------------------------------------------------------------
+	// Helper: fetch the current experiment and return it as a success response.
+	// Used when the experiment is already in a terminal state (the user's stop
+	// intent is already satisfied), so we return 200 OK instead of an error.
+	// -----------------------------------------------------------------------
+	returnCurrentExperiment := func() {
+		var exp models.Experiment
+		var desc, cron sql.NullString
+		expErr := h.db.QueryRowContext(c.Request.Context(), `
+			SELECT id, organization_id, name, description, status,
+			       created_by, schedule_cron, auto_cleanup,
+			       notification_config, created_at, updated_at
+			FROM experiments
+			WHERE id = $1 AND organization_id = $2
+		`, experimentID, claims.OrganizationID).Scan(
+			&exp.ID, &exp.OrganizationID, &exp.Name, &desc,
+			&exp.Status, &exp.CreatedBy, &cron,
+			&exp.AutoCleanup, &exp.NotificationConfig,
+			&exp.CreatedAt, &exp.UpdatedAt,
+		)
+		if expErr != nil {
+			h.logger.Error("failed to fetch experiment after stop", zap.Error(expErr))
+			c.JSON(http.StatusOK, models.APIResponse{
+				Success: true,
+				Data: gin.H{
+					"id":     experimentID,
+					"status": "stopped",
+				},
+			})
+			return
+		}
+		if desc.Valid {
+			exp.Description = desc.String
+		}
+		if cron.Valid {
+			exp.ScheduleCron = &cron.String
+		}
+		c.JSON(http.StatusOK, models.APIResponse{
+			Success: true,
+			Data:    exp,
+		})
+	}
+
+	// -----------------------------------------------------------------------
+	// Step 1: Find the most recent active experiment run.
+	// A user may request a stop while the experiment is still pending/queued
+	// in the worker, so we look for all non-terminal statuses.
+	// -----------------------------------------------------------------------
 	var run models.ExperimentRun
 	var errorMessage sql.NullString
 	var resultSummary sql.NullString
@@ -925,7 +1111,7 @@ func (h *Handler) StopExperiment(c *gin.Context) {
 		       trigger_type, started_at, completed_at, duration_ms,
 		       result_summary, error_message, cleanup_status, created_at
 		FROM experiment_runs
-		WHERE experiment_id = $1 AND status = 'running'
+		WHERE experiment_id = $1 AND status IN ('running', 'pending', 'queued')
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, experimentID).Scan(
@@ -936,29 +1122,58 @@ func (h *Handler) StopExperiment(c *gin.Context) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusConflict, models.ErrorResponse{
-				Error:   "no_running_run",
-				Message: "No running experiment found to stop.",
-				Code:    http.StatusConflict,
-			})
+			// No active run found. The experiment may have already completed, failed,
+			// or been cancelled. Since the user's intent (stop the experiment) is already
+			// satisfied, return 200 OK with the current experiment data instead of an error.
+			h.logger.Info("no active experiment run found for stop request — likely already in terminal state",
+				zap.String("experiment_id", experimentID.String()),
+			)
+
+			// Update the experiment status to stopped if it isn't already.
+			_, updateErr := h.db.ExecContext(c.Request.Context(), `
+				UPDATE experiments
+				SET status = CASE WHEN status IN ('running','active') THEN 'stopped' ELSE status END,
+				    updated_at = NOW()
+				WHERE id = $1
+			`, experimentID)
+			if updateErr != nil {
+				h.logger.Warn("failed to update experiment status on idempotent stop", zap.Error(updateErr))
+			}
+
+			returnCurrentExperiment()
 			return
 		}
-		h.logger.Error("failed to find running experiment run", zap.Error(err))
+		h.logger.Error("failed to find active experiment run", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "internal_error",
-			Message: "Failed to stop experiment.",
+			Message: "Failed to look up experiment run. Please try again.",
 			Code:    http.StatusInternalServerError,
 		})
 		return
 	}
 
-	// Verify the experiment belongs to the user's organization
+	h.logger.Info("found active experiment run to stop",
+		zap.String("run_id", run.ID.String()),
+		zap.String("current_status", run.Status),
+	)
+
+	// -----------------------------------------------------------------------
+	// Step 2: Verify the experiment belongs to the user's organization.
+	// -----------------------------------------------------------------------
 	var orgID uuid.UUID
 	err = h.db.QueryRowContext(c.Request.Context(),
 		"SELECT organization_id FROM experiments WHERE id = $1",
 		experimentID,
 	).Scan(&orgID)
-	if err != nil || orgID != claims.OrganizationID {
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:   "not_found",
+			Message: "Experiment not found.",
+			Code:    http.StatusNotFound,
+		})
+		return
+	}
+	if orgID != claims.OrganizationID {
 		c.JSON(http.StatusNotFound, models.ErrorResponse{
 			Error:   "not_found",
 			Message: "Experiment not found.",
@@ -967,7 +1182,30 @@ func (h *Handler) StopExperiment(c *gin.Context) {
 		return
 	}
 
-	// Update the run status to cancelled
+	// -----------------------------------------------------------------------
+	// Step 3: Cancel the running experiment via the Engine.
+	// This cancels the execution context so long-running operations
+	// (WaitForPodReady, SIEM validation, etc.) terminate promptly, and
+	// also cleans up K8s resources (attacker pods, namespaces).
+	// Only call StopExperiment for runs that are actually executing.
+	// -----------------------------------------------------------------------
+	if h.engine != nil && run.Status == StatusRunning {
+		stopCtx, stopCancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer stopCancel()
+		if err := h.engine.StopExperiment(stopCtx, run.ID); err != nil {
+			h.logger.Warn("engine StopExperiment returned error (experiment may have already finished)",
+				zap.String("run_id", run.ID.String()),
+				zap.Error(err),
+			)
+			// Non-fatal: the DB update below will still mark the run as cancelled.
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Step 4: Update the run status to cancelled.
+	// Match against the current status to avoid race conditions with
+	// concurrent updates (e.g., the run might have just completed).
+	// -----------------------------------------------------------------------
 	now := time.Now()
 	var durationMs int64
 	if run.StartedAt != nil {
@@ -975,26 +1213,102 @@ func (h *Handler) StopExperiment(c *gin.Context) {
 	}
 
 	errMsg := "Cancelled by user"
-	_, err = h.db.ExecContext(c.Request.Context(), `
+	result, err := h.db.ExecContext(c.Request.Context(), `
 		UPDATE experiment_runs
 		SET status = 'cancelled', completed_at = $1, duration_ms = $2, error_message = $3
-		WHERE id = $4
+		WHERE id = $4 AND status IN ('running', 'pending', 'queued')
 	`, now, durationMs, errMsg, run.ID)
 	if err != nil {
-		h.logger.Error("failed to cancel experiment run", zap.Error(err))
+		h.logger.Error("failed to cancel experiment run",
+			zap.String("run_id", run.ID.String()),
+			zap.String("current_status", run.Status),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "internal_error",
-			Message: "Failed to stop experiment.",
+			Message: "Failed to update experiment status. Please try again.",
 			Code:    http.StatusInternalServerError,
 		})
 		return
 	}
 
-	// Signal the worker to stop processing this run
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		// The run transitioned to a terminal state between our SELECT and UPDATE.
+		// The user's intent (stop) is already satisfied — return success.
+		h.logger.Info("experiment run already in terminal state during stop (race condition)",
+			zap.String("run_id", run.ID.String()),
+		)
+
+		// Make sure the experiment status reflects the current state.
+		_, _ = h.db.ExecContext(c.Request.Context(), `
+			UPDATE experiments SET status = 'stopped', updated_at = NOW() WHERE id = $1 AND status IN ('running','active')
+		`, experimentID)
+
+		returnCurrentExperiment()
+		return
+	}
+
+	// -----------------------------------------------------------------------
+	// Step 5: Signal the worker to stop processing this run.
+	// Redundant with Engine.StopExperiment but kept as a fallback for
+	// goroutines that check isStopRequested via Redis.
+	// -----------------------------------------------------------------------
 	stopKey := fmt.Sprintf("experiment:stop:%s", run.ID.String())
-	if err := h.rdb.Set(c.Request.Context(), stopKey, "1", 10*time.Minute).Err(); err != nil {
-		h.logger.Error("failed to set stop signal in Redis", zap.Error(err))
-		// Non-fatal: the run is already marked as cancelled in the DB
+	if h.rdb != nil {
+		if err := h.rdb.Set(c.Request.Context(), stopKey, "1", 10*time.Minute).Err(); err != nil {
+			h.logger.Error("failed to set stop signal in Redis", zap.Error(err))
+			// Non-fatal: the run is already marked as cancelled in the DB
+		}
+	}
+
+	// Update the experiment status to stopped
+	_, err = h.db.ExecContext(c.Request.Context(),
+		"UPDATE experiments SET status = 'stopped', updated_at = NOW() WHERE id = $1",
+		experimentID,
+	)
+	if err != nil {
+		h.logger.Error("failed to update experiment status to stopped", zap.Error(err))
+		// Non-fatal: the run is already cancelled
+	}
+
+	// Fetch the updated experiment
+	var updatedExp models.Experiment
+	var description sql.NullString
+	var scheduleCron sql.NullString
+
+	err = h.db.QueryRowContext(c.Request.Context(), `
+		SELECT id, organization_id, name, description, status,
+		       created_by, schedule_cron, auto_cleanup,
+		       notification_config, created_at, updated_at
+		FROM experiments
+		WHERE id = $1 AND organization_id = $2
+	`, experimentID, claims.OrganizationID).Scan(
+		&updatedExp.ID, &updatedExp.OrganizationID, &updatedExp.Name, &description,
+		&updatedExp.Status, &updatedExp.CreatedBy, &scheduleCron,
+		&updatedExp.AutoCleanup, &updatedExp.NotificationConfig,
+		&updatedExp.CreatedAt, &updatedExp.UpdatedAt,
+	)
+	if err != nil {
+		h.logger.Error("failed to fetch updated experiment", zap.Error(err))
+		// Return a minimal response if we can't fetch the updated experiment
+		c.JSON(http.StatusOK, models.APIResponse{
+			Success: true,
+			Data: gin.H{
+				"id":         experimentID,
+				"status":     "stopped",
+				"run_id":     run.ID,
+				"run_number": run.RunNumber,
+			},
+		})
+		return
+	}
+
+	if description.Valid {
+		updatedExp.Description = description.String
+	}
+	if scheduleCron.Valid {
+		updatedExp.ScheduleCron = &scheduleCron.String
 	}
 
 	h.logger.Info("experiment execution stopped",
@@ -1003,11 +1317,378 @@ func (h *Handler) StopExperiment(c *gin.Context) {
 		zap.String("stopped_by", claims.UserID.String()),
 	)
 
-	c.JSON(http.StatusOK, gin.H{
-		"message":      "Experiment execution stopped.",
-		"run_id":       run.ID,
-		"run_number":   run.RunNumber,
-		"cancelled_at": now,
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    updatedExp,
+	})
+}
+
+// GetExperimentLogs returns logs for an experiment.
+// GET /api/v1/experiments/:id/logs
+//
+// It collects log entries from two sources:
+//  1. Step statuses stored in Redis (key: experiment:steps:{runID}) —
+//     this gives structured, timestamped progress messages.
+//  2. Attack pod records from the database — this gives pod lifecycle events.
+//
+// The result is a chronological list of human-readable log lines.
+func (h *Handler) GetExperimentLogs(c *gin.Context) {
+	_, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	experimentID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid experiment ID format.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Verify the experiment exists
+	var exists bool
+	err = h.db.QueryRowContext(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM experiments WHERE id = $1)",
+		experimentID,
+	).Scan(&exists)
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:   "not_found",
+			Message: "Experiment not found.",
+			Code:    http.StatusNotFound,
+		})
+		return
+	}
+
+	tailParam := c.DefaultQuery("tail", "200")
+	tailLimit := 200
+	if v, parseErr := strconv.Atoi(tailParam); parseErr == nil && v > 0 {
+		tailLimit = v
+	}
+
+	var logs []string
+
+	// --- Source 1: Step statuses from Redis ---
+	// Find the latest run for this experiment to look up its step statuses.
+	var latestRunID *uuid.UUID
+	var latestRunStatus string
+	err = h.db.QueryRowContext(c.Request.Context(), `
+		SELECT id, status FROM experiment_runs
+		WHERE experiment_id = $1
+		ORDER BY created_at DESC LIMIT 1
+	`, experimentID).Scan(&latestRunID, &latestRunStatus)
+	if err == nil && latestRunID != nil && h.rdb != nil {
+		stepsKey := fmt.Sprintf("experiment:steps:%s", latestRunID.String())
+		data, redisErr := h.rdb.Get(c.Request.Context(), stepsKey).Bytes()
+		if redisErr == nil && len(data) > 0 {
+			var steps []struct {
+				Name        string  `json:"name"`
+				Status      string  `json:"status"`
+				StartedAt   *string `json:"startedAt"`
+				CompletedAt *string `json:"completedAt"`
+				Message     string  `json:"message"`
+			}
+			if jsonErr := json.Unmarshal(data, &steps); jsonErr == nil {
+				for _, s := range steps {
+					ts := ""
+					if s.StartedAt != nil && *s.StartedAt != "" {
+						ts = *s.StartedAt
+					} else if s.CompletedAt != nil && *s.CompletedAt != "" {
+						ts = *s.CompletedAt
+					}
+					prefix := "[INFO]"
+					if s.Status == "failed" {
+						prefix = "[ERROR]"
+					} else if s.Status == "running" || s.Status == "in_progress" {
+						prefix = "[PROGRESS]"
+					}
+					line := fmt.Sprintf("%s Step %s — status: %s", prefix, s.Name, s.Status)
+					if s.Message != "" {
+						line += fmt.Sprintf(" — %s", s.Message)
+					}
+					if ts != "" {
+						line = fmt.Sprintf("%s %s", ts, line)
+					}
+					logs = append(logs, line)
+				}
+			}
+		}
+	}
+
+	// --- Source 2: Attack pod lifecycle events from the database ---
+	rows, dbErr := h.db.QueryContext(c.Request.Context(), `
+		SELECT ap.pod_name, ap.status, ap.phase, ap.started_at, ap.terminated_at, ap.logs_summary
+		FROM attack_pods ap
+		JOIN experiment_runs er ON ap.run_id = er.id
+		WHERE er.experiment_id = $1
+		ORDER BY ap.started_at ASC NULLS LAST
+	`, experimentID)
+	if dbErr == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var podName, podStatus, phase string
+			var startedAt, terminatedAt *time.Time
+			var logsSummary *string
+			if scanErr := rows.Scan(&podName, &podStatus, &phase, &startedAt, &terminatedAt, &logsSummary); scanErr != nil {
+				continue
+			}
+
+			prefix := "[POD]"
+			if podStatus == "failed" || phase == "Failed" {
+				prefix = "[ERROR]"
+			} else if podStatus == "running" || phase == "Running" {
+				prefix = "[PROGRESS]"
+			}
+
+			ts := ""
+			if startedAt != nil {
+				ts = startedAt.Format(time.RFC3339)
+			}
+
+			line := fmt.Sprintf("%s Pod %s — phase: %s, status: %s", prefix, podName, phase, podStatus)
+			if ts != "" {
+				line = fmt.Sprintf("%s %s", ts, line)
+			}
+			if logsSummary != nil && *logsSummary != "" {
+				// Append the first few lines of the summary for context.
+				summaryLines := strings.Split(*logsSummary, "\n")
+				limit := 5
+				if len(summaryLines) < limit {
+					limit = len(summaryLines)
+				}
+				for i := 0; i < limit; i++ {
+					line += "\n  " + summaryLines[i]
+				}
+				if len(summaryLines) > 5 {
+					line += fmt.Sprintf("\n  ... (%d more lines)", len(summaryLines)-5)
+				}
+			}
+
+			if terminatedAt != nil {
+				line += fmt.Sprintf(" — terminated: %s", terminatedAt.Format(time.RFC3339))
+			}
+
+			logs = append(logs, line)
+		}
+	} else {
+		h.logger.Warn("failed to query attack pod logs", zap.Error(dbErr))
+	}
+
+	// --- Source 3: Run-level events from the database ---
+	runRows, runErr := h.db.QueryContext(c.Request.Context(), `
+		SELECT run_number, status, started_at, completed_at, error_message
+		FROM experiment_runs
+		WHERE experiment_id = $1
+		ORDER BY created_at ASC
+	`, experimentID)
+	if runErr == nil {
+		defer runRows.Close()
+		for runRows.Next() {
+			var runNumber int
+			var status string
+			var startedAt, completedAt *time.Time
+			var errMsg *string
+			if scanErr := runRows.Scan(&runNumber, &status, &startedAt, &completedAt, &errMsg); scanErr != nil {
+				continue
+			}
+
+			prefix := "[RUN]"
+			if status == "failed" {
+				prefix = "[ERROR]"
+			} else if status == "running" {
+				prefix = "[PROGRESS]"
+			}
+
+			ts := ""
+			if startedAt != nil {
+				ts = startedAt.Format(time.RFC3339)
+			}
+
+			line := fmt.Sprintf("%s Run #%d — status: %s", prefix, runNumber, status)
+			if ts != "" {
+				line = fmt.Sprintf("%s %s", ts, line)
+			}
+			if errMsg != nil && *errMsg != "" {
+				line += fmt.Sprintf(" — %s", *errMsg)
+			}
+
+			logs = append(logs, line)
+		}
+	}
+
+	// Sort all logs chronologically by their leading timestamp (best-effort).
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i] < logs[j]
+	})
+
+	// Apply tail limit
+	if len(logs) > tailLimit {
+		logs = logs[len(logs)-tailLimit:]
+	}
+
+	// If no logs were collected, return a helpful placeholder.
+	if len(logs) == 0 {
+		logs = []string{
+			"[INFO] No log entries available yet. Logs will appear here when the experiment runs.",
+		}
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    logs,
+	})
+}
+
+// GetExperimentRuns returns paginated runs for an experiment.
+// GET /api/v1/experiments/:id/runs
+func (h *Handler) GetExperimentRuns(c *gin.Context) {
+	claims, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	experimentID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid experiment ID format.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Verify the experiment exists and belongs to the organization
+	var orgID uuid.UUID
+	err = h.db.QueryRowContext(c.Request.Context(),
+		"SELECT organization_id FROM experiments WHERE id = $1",
+		experimentID,
+	).Scan(&orgID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{
+				Error:   "not_found",
+				Message: "Experiment not found.",
+				Code:    http.StatusNotFound,
+			})
+			return
+		}
+		h.logger.Error("failed to query experiment", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to retrieve experiment runs.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	if orgID != claims.OrganizationID {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:   "not_found",
+			Message: "Experiment not found.",
+			Code:    http.StatusNotFound,
+		})
+		return
+	}
+
+	// Parse pagination parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	// Count total runs
+	var total int64
+	err = h.db.QueryRowContext(c.Request.Context(),
+		"SELECT COUNT(*) FROM experiment_runs WHERE experiment_id = $1",
+		experimentID,
+	).Scan(&total)
+	if err != nil {
+		h.logger.Error("failed to count experiment runs", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to retrieve experiment runs.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	// Fetch runs
+	rows, err := h.db.QueryContext(c.Request.Context(), `
+		SELECT id, experiment_id, cluster_id, run_number, status, triggered_by,
+		       trigger_type, started_at, completed_at, duration_ms,
+		       result_summary, error_message, cleanup_status, created_at
+		FROM experiment_runs
+		WHERE experiment_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`, experimentID, limit, offset)
+	if err != nil {
+		h.logger.Error("failed to query experiment runs", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to retrieve experiment runs.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+	defer rows.Close()
+
+	runs := make([]models.ExperimentRun, 0)
+	for rows.Next() {
+		var run models.ExperimentRun
+		var errorMessage sql.NullString
+		var resultSummary sql.NullString
+
+		err := rows.Scan(
+			&run.ID, &run.ExperimentID, &run.ClusterID, &run.RunNumber,
+			&run.Status, &run.TriggeredBy, &run.TriggerType,
+			&run.StartedAt, &run.CompletedAt, &run.DurationMs,
+			&resultSummary, &errorMessage, &run.CleanupStatus, &run.CreatedAt,
+		)
+		if err != nil {
+			h.logger.Error("failed to scan experiment run", zap.Error(err))
+			continue
+		}
+
+		if resultSummary.Valid {
+			run.ResultSummary = json.RawMessage(resultSummary.String)
+		}
+		if errorMessage.Valid {
+			run.ErrorMessage = &errorMessage.String
+		}
+
+		runs = append(runs, run)
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	c.JSON(http.StatusOK, models.PaginatedResponse{
+		Data:       runs,
+		Total:      total,
+		Page:       page,
+		PageSize:   limit,
+		TotalPages: totalPages,
 	})
 }
 
@@ -1162,6 +1843,69 @@ func (h *Handler) getClaimsFromContext(c *gin.Context) (*auth.TokenClaims, error
 	return claims, nil
 }
 
+// resolveExecutionClusterID resolves the cluster used to start an experiment.
+// If no explicit cluster is provided, it falls back to a connected cluster in the
+// database and, in development, creates a placeholder connected cluster so runs
+// can proceed in dry-run mode.
+func (h *Handler) resolveExecutionClusterID(ctx context.Context, organizationID uuid.UUID, requestedClusterID string) (uuid.UUID, error) {
+	if strings.TrimSpace(requestedClusterID) != "" {
+		if parsed, err := uuid.Parse(requestedClusterID); err == nil {
+			return parsed, nil
+		}
+		h.logger.Warn("ignoring invalid requested cluster id and falling back to a connected cluster",
+			zap.String("requested_cluster_id", requestedClusterID),
+		)
+	}
+
+	var clusterID uuid.UUID
+	err := h.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM kubernetes_clusters
+		WHERE organization_id = $1 AND status = 'connected'
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, organizationID).Scan(&clusterID)
+	if err == nil {
+		return clusterID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, fmt.Errorf("query connected cluster: %w", err)
+	}
+
+	// Development fallback: auto-create a connected placeholder cluster so the
+	// platform can execute experiments even when no real cluster has been registered.
+	placeholderName := "dev-cluster"
+	apiEndpoint := "https://127.0.0.1:6443"
+	caCertificate := "dev-ca"
+	clientCertificate := "dev-client-cert"
+	clientKey := "dev-client-key"
+	description := "Auto-created development cluster"
+	defaultNamespace := "chaos-sec"
+	status := "connected"
+
+	err = h.db.QueryRowContext(ctx, `
+		INSERT INTO kubernetes_clusters (
+			organization_id, name, description, api_endpoint,
+			ca_certificate, client_certificate, client_key,
+			default_namespace, status
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id
+	`, organizationID, placeholderName, description, apiEndpoint,
+		caCertificate, clientCertificate, clientKey, defaultNamespace, status,
+	).Scan(&clusterID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("insert placeholder cluster: %w", err)
+	}
+
+	h.logger.Info("created placeholder development cluster for experiment execution",
+		zap.String("organization_id", organizationID.String()),
+		zap.String("cluster_id", clusterID.String()),
+	)
+
+	return clusterID, nil
+}
+
 // fetchExperimentTemplates retrieves all templates for an experiment.
 func (h *Handler) fetchExperimentTemplates(c *gin.Context, experimentID uuid.UUID) ([]models.ExperimentTemplate, error) {
 	rows, err := h.db.QueryContext(c.Request.Context(), `
@@ -1180,13 +1924,18 @@ func (h *Handler) fetchExperimentTemplates(c *gin.Context, experimentID uuid.UUI
 	templates := make([]models.ExperimentTemplate, 0)
 	for rows.Next() {
 		var et models.ExperimentTemplate
+		var targetNamespacesOut pq.StringArray
 		err := rows.Scan(
 			&et.ID, &et.ExperimentID, &et.AttackTemplateID,
 			&et.OrderIndex, &et.Configuration,
-			&et.TargetNamespaces, &et.TargetLabels,
+			&targetNamespacesOut, &et.TargetLabels,
 			&et.DurationSeconds, &et.CleanupPolicy,
 			&et.SIEMValidation, &et.Enabled, &et.CreatedAt,
 		)
+		if err == nil {
+			tt := []string(targetNamespacesOut)
+			et.TargetNamespaces = tt
+		}
 		if err != nil {
 			return nil, fmt.Errorf("scan experiment template: %w", err)
 		}
@@ -1200,7 +1949,8 @@ func (h *Handler) fetchExperimentTemplates(c *gin.Context, experimentID uuid.UUI
 	return templates, nil
 }
 
-// fetchRecentRuns retrieves the most recent experiment runs.
+// fetchRecentRuns retrieves the most recent experiment runs, including their
+// attack pods so the frontend can display pod status on the detail page.
 func (h *Handler) fetchRecentRuns(c *gin.Context, experimentID uuid.UUID, limit int) ([]models.ExperimentRun, error) {
 	rows, err := h.db.QueryContext(c.Request.Context(), `
 		SELECT id, experiment_id, cluster_id, run_number, status, triggered_by,
@@ -1217,6 +1967,7 @@ func (h *Handler) fetchRecentRuns(c *gin.Context, experimentID uuid.UUID, limit 
 	defer rows.Close()
 
 	runs := make([]models.ExperimentRun, 0)
+	runIDs := make([]uuid.UUID, 0)
 	for rows.Next() {
 		var run models.ExperimentRun
 		var errorMessage sql.NullString
@@ -1236,14 +1987,83 @@ func (h *Handler) fetchRecentRuns(c *gin.Context, experimentID uuid.UUID, limit 
 			run.ErrorMessage = &errorMessage.String
 		}
 		if resultSummary.Valid {
-			// resultSummary is already json.RawMessage from Scan
+			run.ResultSummary = json.RawMessage(resultSummary.String)
 		}
 
+		run.AttackPods = []models.AttackPod{} // initialise so JSON serialises [] not null
 		runs = append(runs, run)
+		runIDs = append(runIDs, run.ID)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate experiment run rows: %w", err)
+	}
+
+	// If there are no runs, return early — no pods to look up.
+	if len(runIDs) == 0 {
+		return runs, nil
+	}
+
+	// Fetch all attack pods for these runs in a single query (avoids N+1).
+	podRows, podErr := h.db.QueryContext(c.Request.Context(), `
+		SELECT id, run_id, template_id, pod_name, namespace, node_name,
+		       ip_address, status, phase, started_at, terminated_at,
+		       exit_code, logs_summary, created_at
+		FROM attack_pods
+		WHERE run_id = ANY($1)
+		ORDER BY created_at ASC
+	`, pq.Array(runIDs))
+	if podErr != nil {
+		h.logger.Warn("failed to fetch attack pods for runs", zap.Error(podErr))
+		// Non-fatal: return runs without pods rather than failing entirely.
+		return runs, nil
+	}
+	defer podRows.Close()
+
+	// Build a map from run ID → pods for fast lookup.
+	podsByRun := make(map[uuid.UUID][]models.AttackPod)
+	for podRows.Next() {
+		var pod models.AttackPod
+		var nodeName, ipAddress, logsSummary sql.NullString
+		var exitCode sql.NullInt64
+		var startedAt, terminatedAt *time.Time
+
+		if scanErr := podRows.Scan(
+			&pod.ID, &pod.RunID, &pod.TemplateID, &pod.PodName, &pod.Namespace,
+			&nodeName, &ipAddress, &pod.Status, &pod.Phase,
+			&startedAt, &terminatedAt, &exitCode, &logsSummary, &pod.CreatedAt,
+		); scanErr != nil {
+			h.logger.Warn("failed to scan attack pod row", zap.Error(scanErr))
+			continue
+		}
+
+		if nodeName.Valid {
+			pod.NodeName = &nodeName.String
+		}
+		if ipAddress.Valid {
+			pod.IPAddress = &ipAddress.String
+		}
+		pod.StartedAt = startedAt
+		pod.TerminatedAt = terminatedAt
+		if exitCode.Valid {
+			code := int(exitCode.Int64)
+			pod.ExitCode = &code
+		}
+		if logsSummary.Valid {
+			pod.LogsSummary = &logsSummary.String
+		}
+
+		podsByRun[pod.RunID] = append(podsByRun[pod.RunID], pod)
+	}
+	if podRows.Err() != nil {
+		h.logger.Warn("error iterating attack pod rows", zap.Error(podRows.Err()))
+	}
+
+	// Attach pods to their corresponding runs.
+	for i := range runs {
+		if pods, ok := podsByRun[runs[i].ID]; ok {
+			runs[i].AttackPods = pods
+		}
 	}
 
 	return runs, nil
@@ -1263,4 +2083,449 @@ func nilIfEmptyPtr(s *string) interface{} {
 		return nil
 	}
 	return *s
+}
+
+// ListReports lists all reports for an organization.
+// GET /api/v1/reports
+func (h *Handler) ListReports(c *gin.Context) {
+	claims, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	// Parse query parameters
+	page := 1
+	pageSize := 20
+	if p := c.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	if ps := c.Query("page_size"); ps != "" {
+		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 && parsed <= 100 {
+			pageSize = parsed
+		}
+	}
+
+	reportType := c.Query("type")
+	status := c.Query("status")
+	dateFrom := c.Query("date_from")
+	dateTo := c.Query("date_to")
+
+	offset := (page - 1) * pageSize
+
+	// Build query
+	baseQuery := `
+		FROM reports
+		WHERE organization_id = $1
+	`
+	args := []interface{}{claims.OrganizationID}
+	argIdx := 2
+
+	if reportType != "" {
+		baseQuery += fmt.Sprintf(" AND type = $%d", argIdx)
+		args = append(args, reportType)
+		argIdx++
+	}
+	if status != "" {
+		baseQuery += fmt.Sprintf(" AND status = $%d", argIdx)
+		args = append(args, status)
+		argIdx++
+	}
+	if dateFrom != "" {
+		baseQuery += fmt.Sprintf(" AND date_range_from >= $%d", argIdx)
+		args = append(args, dateFrom)
+		argIdx++
+	}
+	if dateTo != "" {
+		baseQuery += fmt.Sprintf(" AND date_range_to <= $%d", argIdx)
+		args = append(args, dateTo)
+		argIdx++
+	}
+
+	// Get total count
+	var total int64
+	countQuery := "SELECT COUNT(*) " + baseQuery
+	if err := h.db.QueryRowContext(c.Request.Context(), countQuery, args...).Scan(&total); err != nil {
+		h.logger.Error("failed to count reports", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to list reports.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	// Get paginated results
+	query := `
+		SELECT id, title, type, format, description, experiment_ids,
+		       date_range_from, date_range_to, status, error_message,
+		       download_url, file_size, generated_by, created_at, updated_at
+	` + baseQuery + fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+	args = append(args, pageSize, offset)
+
+	rows, err := h.db.QueryContext(c.Request.Context(), query, args...)
+	if err != nil {
+		h.logger.Error("failed to list reports", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to list reports.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+	defer rows.Close()
+
+	reports := make([]models.Report, 0)
+	for rows.Next() {
+		var r models.Report
+		var desc, errMsg, downloadURL sql.NullString
+		var fileSize sql.NullInt64
+		var dateRangeFrom, dateRangeTo sql.NullTime
+
+		if err := rows.Scan(
+			&r.ID, &r.Title, &r.Type, &r.Format, &desc,
+			&r.ExperimentIDs, &dateRangeFrom, &dateRangeTo,
+			&r.Status, &errMsg, &downloadURL, &fileSize,
+			&r.GeneratedBy, &r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
+			h.logger.Error("failed to scan report row", zap.Error(err))
+			continue
+		}
+
+		if desc.Valid {
+			r.Description = desc.String
+		}
+		if errMsg.Valid {
+			r.ErrorMessage = &errMsg.String
+		}
+		if downloadURL.Valid {
+			r.DownloadURL = &downloadURL.String
+		}
+		if fileSize.Valid {
+			r.FileSize = &fileSize.Int64
+		}
+		if dateRangeFrom.Valid {
+			r.DateRangeFrom = &dateRangeFrom.Time
+		}
+		if dateRangeTo.Valid {
+			r.DateRangeTo = &dateRangeTo.Time
+		}
+
+		reports = append(reports, r)
+	}
+
+	totalPages := int(total) / pageSize
+	if int(total)%pageSize != 0 {
+		totalPages++
+	}
+
+	c.JSON(http.StatusOK, models.PaginatedResponse{
+		Data:       reports,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
+}
+
+// GetReport retrieves a single report by ID.
+// GET /api/v1/reports/:id
+func (h *Handler) GetReport(c *gin.Context) {
+	claims, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	reportID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid report ID format.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	var r models.Report
+	var desc, errMsg, downloadURL sql.NullString
+	var fileSize sql.NullInt64
+	var dateRangeFrom, dateRangeTo sql.NullTime
+
+	err = h.db.QueryRowContext(c.Request.Context(), `
+		SELECT id, organization_id, title, type, format, description,
+		       experiment_ids, date_range_from, date_range_to, status,
+		       error_message, download_url, file_size, generated_by,
+		       created_at, updated_at
+		FROM reports
+		WHERE id = $1 AND organization_id = $2
+	`, reportID, claims.OrganizationID).Scan(
+		&r.ID, &r.OrganizationID, &r.Title, &r.Type, &r.Format, &desc,
+		&r.ExperimentIDs, &dateRangeFrom, &dateRangeTo, &r.Status,
+		&errMsg, &downloadURL, &fileSize, &r.GeneratedBy,
+		&r.CreatedAt, &r.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{
+				Error:   "not_found",
+				Message: "Report not found.",
+				Code:    http.StatusNotFound,
+			})
+			return
+		}
+		h.logger.Error("failed to get report", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to get report.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	if desc.Valid {
+		r.Description = desc.String
+	}
+	if errMsg.Valid {
+		r.ErrorMessage = &errMsg.String
+	}
+	if downloadURL.Valid {
+		r.DownloadURL = &downloadURL.String
+	}
+	if fileSize.Valid {
+		r.FileSize = &fileSize.Int64
+	}
+	if dateRangeFrom.Valid {
+		r.DateRangeFrom = &dateRangeFrom.Time
+	}
+	if dateRangeTo.Valid {
+		r.DateRangeTo = &dateRangeTo.Time
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    r,
+	})
+}
+
+// DeleteReport deletes a report by ID.
+// DELETE /api/v1/reports/:id
+func (h *Handler) DeleteReport(c *gin.Context) {
+	claims, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	reportID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid report ID format.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	result, err := h.db.ExecContext(c.Request.Context(), `
+		DELETE FROM reports WHERE id = $1 AND organization_id = $2
+	`, reportID, claims.OrganizationID)
+	if err != nil {
+		h.logger.Error("failed to delete report", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to delete report.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:   "not_found",
+			Message: "Report not found.",
+			Code:    http.StatusNotFound,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    nil,
+		Message: "Report deleted successfully.",
+	})
+}
+
+// GenerateReportRequest represents a request to generate a new report.
+type GenerateReportRequest struct {
+	Title         string   `json:"title" binding:"required"`
+	Type          string   `json:"type" binding:"required"`
+	Format        string   `json:"format" binding:"required"`
+	Description   string   `json:"description"`
+	ExperimentIDs []string `json:"experiment_ids"`
+	DateFrom      string   `json:"date_from"`
+	DateTo        string   `json:"date_to"`
+}
+
+// GenerateReport generates a new report asynchronously.
+// POST /api/v1/reports
+func (h *Handler) GenerateReport(c *gin.Context) {
+	claims, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	var req GenerateReportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Invalid request body: " + err.Error(),
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Validate report type
+	validTypes := map[string]bool{
+		"experiment": true,
+		"compliance": true,
+		"executive":  true,
+		"trend":      true,
+	}
+	if !validTypes[req.Type] {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_type",
+			Message: "Invalid report type. Must be: experiment, compliance, executive, or trend.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Validate format
+	validFormats := map[string]bool{
+		"pdf":  true,
+		"csv":  true,
+		"json": true,
+		"html": true,
+	}
+	if !validFormats[req.Format] {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_format",
+			Message: "Invalid report format. Must be: pdf, csv, json, or html.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Parse experiment IDs into UUIDs
+	experimentIDs := make([]uuid.UUID, 0)
+	for _, idStr := range req.ExperimentIDs {
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{
+				Error:   "invalid_experiment_id",
+				Message: "Invalid experiment ID: " + idStr,
+				Code:    http.StatusBadRequest,
+			})
+			return
+		}
+		experimentIDs = append(experimentIDs, id)
+	}
+
+	// Parse date range if provided
+	var dateFrom, dateTo *time.Time
+	if req.DateFrom != "" {
+		if parsed, err := time.Parse("2006-01-02", req.DateFrom); err == nil {
+			dateFrom = &parsed
+		}
+	}
+	if req.DateTo != "" {
+		if parsed, err := time.Parse("2006-01-02", req.DateTo); err == nil {
+			dateTo = &parsed
+		}
+	}
+
+	// Create the report record
+	var reportID uuid.UUID
+	var downloadURL *string
+	var fileSize *int64
+
+	err = h.db.QueryRowContext(c.Request.Context(), `
+		INSERT INTO reports (organization_id, title, type, format, description,
+		                    experiment_ids, date_range_from, date_range_to,
+		                    status, generated_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'generating', $9)
+		RETURNING id
+	`, claims.OrganizationID, req.Title, req.Type, req.Format, req.Description,
+		experimentIDs, dateFrom, dateTo, claims.UserID).Scan(&reportID)
+	if err != nil {
+		h.logger.Error("failed to create report", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to create report.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	// In a real implementation, we would queue a background job to generate the report.
+	// For now, we'll simulate the report generation completing immediately.
+	// TODO: Integrate with a job queue (e.g., Redis-based worker) for async generation.
+
+	// Simulate some file being generated
+	generatedURL := "/reports/" + reportID.String() + "/download"
+	generatedSize := int64(1024 * 100) // 100KB placeholder
+
+	// Update the report as ready
+	if _, err := h.db.ExecContext(c.Request.Context(), `
+		UPDATE reports
+		SET status = 'ready', download_url = $1, file_size = $2
+		WHERE id = $3
+	`, generatedURL, generatedSize, reportID); err != nil {
+		h.logger.Error("failed to update report status", zap.Error(err))
+	}
+
+	downloadURL = &generatedURL
+	fileSize = &generatedSize
+
+	report := models.Report{
+		ID:             reportID,
+		OrganizationID: claims.OrganizationID,
+		Title:          req.Title,
+		Type:           req.Type,
+		Format:         req.Format,
+		Description:    req.Description,
+		Status:         "ready",
+		DownloadURL:    downloadURL,
+		FileSize:       fileSize,
+		GeneratedBy:    claims.UserID,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	c.JSON(http.StatusCreated, models.APIResponse{
+		Success: true,
+		Data:    report,
+		Message: "Report generated successfully.",
+	})
 }

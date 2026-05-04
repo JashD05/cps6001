@@ -59,11 +59,13 @@ import {
   selectExperimentListPage,
   selectExperimentListPageSize,
   selectExperimentFilters,
-  selectExperimentSort,
+  selectExperimentSortBy,
+  selectExperimentSortOrder,
   executeExperiment,
   stopExperiment,
   resetExecuteStatus,
   resetStopStatus,
+  selectExecuteError,
 } from '@/store/experimentSlice';
 import StatusBadge from '@/components/StatusBadge';
 import type { Experiment, ExperimentStatus } from '@/types';
@@ -74,6 +76,8 @@ import type { Experiment, ExperimentStatus } from '@/types';
 
 const STATUS_OPTIONS: { value: ExperimentStatus | 'all'; label: string }[] = [
   { value: 'all', label: 'All Statuses' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'active', label: 'Active' },
   { value: 'pending', label: 'Pending' },
   { value: 'queued', label: 'Queued' },
   { value: 'running', label: 'Running' },
@@ -81,12 +85,13 @@ const STATUS_OPTIONS: { value: ExperimentStatus | 'all'; label: string }[] = [
   { value: 'failed', label: 'Failed' },
   { value: 'stopped', label: 'Stopped' },
   { value: 'timed_out', label: 'Timed Out' },
+  { value: 'archived', label: 'Archived' },
 ];
 
 const SORT_COLUMNS = [
   { id: 'name', label: 'Name' },
   { id: 'templateName', label: 'Template' },
-  { id: 'status', label: 'Status' },
+  { id: 'status', label: 'Outcome' },
   { id: 'clusterName', label: 'Cluster' },
   { id: 'createdAt', label: 'Created' },
   { id: 'startedAt', label: 'Started' },
@@ -131,33 +136,48 @@ const formatDuration = (ms: number | undefined): string => {
   return `${hours}h ${remainingMinutes}m`;
 };
 
-const getResultLabel = (experiment: Experiment): string => {
-  if (experiment.status === 'completed' && experiment.result) {
+const getOutcomeLabel = (experiment: Experiment): string => {
+  if (experiment.result) {
     return experiment.result.success ? 'Passed' : 'Failed';
   }
+  if (experiment.status === 'running') return 'In progress';
+  if (experiment.status === 'queued' || experiment.status === 'pending') return 'Not run';
+  if (experiment.status === 'completed') return 'Completed';
   if (experiment.status === 'failed') return 'Error';
   if (experiment.status === 'stopped') return 'Stopped';
   if (experiment.status === 'timed_out') return 'Timeout';
   return '—';
 };
 
-const getResultColor = (
+const getOutcomeColor = (
   experiment: Experiment,
 ): 'success' | 'error' | 'warning' | 'default' => {
-  if (experiment.status === 'completed' && experiment.result) {
+  if (experiment.result) {
     return experiment.result.success ? 'success' : 'error';
   }
+  if (experiment.status === 'completed') return 'success';
   if (experiment.status === 'failed') return 'error';
+  if (experiment.status === 'running') return 'warning';
   if (experiment.status === 'stopped' || experiment.status === 'timed_out')
     return 'warning';
   return 'default';
 };
 
 const canRunExperiment = (status: ExperimentStatus): boolean =>
-  ['pending', 'queued', 'completed', 'failed', 'stopped', 'timed_out'].includes(status);
+  [
+    'draft',
+    'active',
+    'pending',
+    'queued',
+    'completed',
+    'failed',
+    'stopped',
+    'timed_out',
+    'archived',
+  ].includes(status);
 
 const canStopExperiment = (status: ExperimentStatus): boolean =>
-  ['running', 'queued'].includes(status);
+  ['running', 'queued', 'pending'].includes(status);
 
 // ---------------------------------------------------------------------------
 // Skeleton Loader
@@ -192,7 +212,7 @@ const TableSkeleton: React.FC<{ rows?: number; columns?: number }> = ({
 interface ExperimentRowProps {
   experiment: Experiment;
   onView: (id: string) => void;
-  onRun: (id: string) => void;
+  onRun: (experiment: Experiment) => void;
   onStop: (id: string) => void;
   executing: boolean;
   stopping: boolean;
@@ -252,38 +272,22 @@ const ExperimentRow: React.FC<ExperimentRowProps> = React.memo(
           </Typography>
         </TableCell>
 
-        {/* Status */}
+        {/* Outcome */}
         <TableCell>
-          <StatusBadge
-            status={experiment.status}
-            variant="pill"
-            size="small"
-            animated={experiment.status === 'running'}
-          />
-        </TableCell>
-
-        {/* Cluster */}
-        <TableCell>
-          <Typography variant="body2" noWrap>
-            {experiment.clusterName ?? experiment.clusterId}
-          </Typography>
-        </TableCell>
-
-        {/* Started */}
-        <TableCell>
-          <Typography variant="body2" color="text.secondary" noWrap>
-            {formatRelativeTime(experiment.startedAt ?? experiment.createdAt)}
-          </Typography>
-        </TableCell>
-
-        {/* Result */}
-        <TableCell>
-          {experiment.status === 'completed' || experiment.status === 'failed' ? (
+          {experiment.status === 'running' ? (
+            <Typography variant="body2" color="warning.main" fontWeight={500}>
+              In progress {experiment.progress}%
+            </Typography>
+          ) : experiment.status === 'pending' || experiment.status === 'queued' ? (
+            <Typography variant="body2" color="text.disabled">
+              Not run
+            </Typography>
+          ) : (
             <Stack direction="row" spacing={0.5} alignItems="center">
               <Chip
-                label={getResultLabel(experiment)}
+                label={getOutcomeLabel(experiment)}
                 size="small"
-                color={getResultColor(experiment)}
+                color={getOutcomeColor(experiment)}
                 variant="outlined"
                 sx={{
                   height: 22,
@@ -297,15 +301,28 @@ const ExperimentRow: React.FC<ExperimentRowProps> = React.memo(
                 </Typography>
               )}
             </Stack>
-          ) : experiment.status === 'running' ? (
-            <Typography variant="body2" color="primary" fontWeight={500}>
-              {experiment.progress}%
-            </Typography>
-          ) : (
-            <Typography variant="body2" color="text.disabled">
-              —
-            </Typography>
           )}
+        </TableCell>
+
+        {/* Cluster */}
+        <TableCell>
+          <Typography variant="body2" noWrap>
+            {experiment.clusterName ?? experiment.clusterId}
+          </Typography>
+        </TableCell>
+
+        {/* Created */}
+        <TableCell>
+          <Typography variant="body2" color="text.secondary" noWrap>
+            {formatRelativeTime(experiment.createdAt)}
+          </Typography>
+        </TableCell>
+
+        {/* Started */}
+        <TableCell>
+          <Typography variant="body2" color="text.secondary" noWrap>
+            {experiment.startedAt ? formatRelativeTime(experiment.startedAt) : '—'}
+          </Typography>
         </TableCell>
 
         {/* Actions */}
@@ -330,7 +347,7 @@ const ExperimentRow: React.FC<ExperimentRowProps> = React.memo(
                   disabled={executing}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onRun(experiment.id);
+                    onRun(experiment);
                   }}
                 >
                   <RunIcon fontSize="small" />
@@ -430,11 +447,14 @@ const ExperimentListPage: React.FC = () => {
   const page = useAppSelector(selectExperimentListPage);
   const pageSize = useAppSelector(selectExperimentListPageSize);
   const filters = useAppSelector(selectExperimentFilters);
-  const sort = useAppSelector(selectExperimentSort);
+  const sortBy = useAppSelector(selectExperimentSortBy);
+  const sortOrder = useAppSelector(selectExperimentSortOrder);
   const executeStatus = useAppSelector(
     (state: RootState) => state.experiments.executeStatus,
   );
+  const executeError = useAppSelector(selectExecuteError);
   const stopStatus = useAppSelector((state: RootState) => state.experiments.stopStatus);
+  const stopError = useAppSelector((state: RootState) => state.experiments.stopError);
 
   // -----------------------------------------------------------------------
   // Local State
@@ -449,13 +469,15 @@ const ExperimentListPage: React.FC = () => {
   // -----------------------------------------------------------------------
 
   const stats = useMemo(() => {
-    const all = experiments;
+    // Per-status counts are from the current page only, not the full dataset
+    const visible = experiments;
     return {
       total: totalCount,
-      pending: all.filter((e) => e.status === 'pending' || e.status === 'queued').length,
-      running: all.filter((e) => e.status === 'running').length,
-      completed: all.filter((e) => e.status === 'completed').length,
-      failed: all.filter((e) => e.status === 'failed').length,
+      pending: visible.filter((e) => e.status === 'pending' || e.status === 'queued')
+        .length,
+      running: visible.filter((e) => e.status === 'running').length,
+      completed: visible.filter((e) => e.status === 'completed').length,
+      failed: visible.filter((e) => e.status === 'failed').length,
     };
   }, [experiments, totalCount]);
 
@@ -465,6 +487,18 @@ const ExperimentListPage: React.FC = () => {
   // Effects
   // -----------------------------------------------------------------------
 
+  // Clear any stale action alerts when entering/leaving the page.
+  useEffect(() => {
+    dispatch(resetExecuteStatus());
+    dispatch(resetStopStatus());
+    setActionExperimentId(null);
+
+    return () => {
+      dispatch(resetExecuteStatus());
+      dispatch(resetStopStatus());
+    };
+  }, [dispatch]);
+
   useEffect(() => {
     dispatch(
       fetchExperiments({
@@ -473,15 +507,33 @@ const ExperimentListPage: React.FC = () => {
         status: filters.status === 'all' ? undefined : filters.status,
         search: filters.search || undefined,
         clusterId: filters.clusterId ?? undefined,
-        sortBy: sort.sortBy,
-        sortOrder: sort.sortOrder,
+        sortBy,
+        sortOrder,
       }),
     );
-  }, [dispatch, page, pageSize, filters, sort]);
+  }, [dispatch, page, pageSize, filters, sortBy, sortOrder]);
 
-  // Reset action status after completion
+  // Reset action status after completion and refresh list on success
   useEffect(() => {
-    if (executeStatus === 'succeeded' || executeStatus === 'failed') {
+    if (executeStatus === 'succeeded') {
+      dispatch(
+        fetchExperiments({
+          page,
+          limit: pageSize,
+          status: filters.status === 'all' ? undefined : filters.status,
+          search: filters.search || undefined,
+          clusterId: filters.clusterId ?? undefined,
+          sortBy,
+          sortOrder,
+        }),
+      );
+      const timer = setTimeout(() => {
+        dispatch(resetExecuteStatus());
+        setActionExperimentId(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+    if (executeStatus === 'failed') {
       const timer = setTimeout(() => {
         dispatch(resetExecuteStatus());
         setActionExperimentId(null);
@@ -489,7 +541,7 @@ const ExperimentListPage: React.FC = () => {
       return () => clearTimeout(timer);
     }
     return undefined;
-  }, [executeStatus, dispatch]);
+  }, [executeStatus, dispatch, page, pageSize, filters, sortBy, sortOrder]);
 
   useEffect(() => {
     if (stopStatus === 'succeeded' || stopStatus === 'failed') {
@@ -548,12 +600,12 @@ const ExperimentListPage: React.FC = () => {
 
   const handleSortChange = useCallback(
     (column: string) => {
-      const isCurrentSortColumn = sort.sortBy === column;
-      const newOrder = isCurrentSortColumn && sort.sortOrder === 'asc' ? 'desc' : 'asc';
+      const isCurrentSortColumn = sortBy === column;
+      const newOrder = isCurrentSortColumn && sortOrder === 'asc' ? 'desc' : 'asc';
       dispatch(setExperimentSort({ sortBy: column, sortOrder: newOrder }));
       dispatch(setExperimentPage(1));
     },
-    [dispatch, sort],
+    [dispatch, sortBy, sortOrder],
   );
 
   const handlePageChange = useCallback(
@@ -579,11 +631,11 @@ const ExperimentListPage: React.FC = () => {
         status: filters.status === 'all' ? undefined : filters.status,
         search: filters.search || undefined,
         clusterId: filters.clusterId ?? undefined,
-        sortBy: sort.sortBy,
-        sortOrder: sort.sortOrder,
+        sortBy,
+        sortOrder,
       }),
     );
-  }, [dispatch, page, pageSize, filters, sort]);
+  }, [dispatch, page, pageSize, filters, sortBy, sortOrder]);
 
   const handleViewExperiment = useCallback(
     (id: string) => {
@@ -593,17 +645,18 @@ const ExperimentListPage: React.FC = () => {
   );
 
   const handleRunExperiment = useCallback(
-    (id: string) => {
-      setActionExperimentId(id);
-      dispatch(executeExperiment(id));
+    (experiment: Experiment) => {
+      setActionExperimentId(experiment.id);
+      dispatch(resetExecuteStatus());
+      dispatch(executeExperiment({ id: experiment.id, clusterId: experiment.clusterId }));
     },
     [dispatch],
   );
 
   const handleStopExperiment = useCallback(
-    (id: string) => {
+    async (id: string) => {
       setActionExperimentId(id);
-      dispatch(stopExperiment(id));
+      await dispatch(stopExperiment(id));
     },
     [dispatch],
   );
@@ -699,12 +752,25 @@ const ExperimentListPage: React.FC = () => {
       {/* Execute/Stop Status Alert */}
       {executeStatus === 'succeeded' && actionExperimentId && (
         <Alert severity="success" sx={{ mb: 2, borderRadius: 2 }}>
-          Experiment started successfully.
+          Experiment started successfully. Results will appear when the run completes.
         </Alert>
       )}
       {executeStatus === 'failed' && (
-        <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>
-          Failed to start experiment. Please try again.
+        <Alert
+          severity={executeError?.includes('concurrency_limit') ? 'warning' : 'error'}
+          onClose={() => dispatch(resetExecuteStatus())}
+          sx={{ mb: 2, borderRadius: 2 }}
+        >
+          {executeError?.includes('concurrency_limit') ? (
+            <>
+              {executeError}
+              <br />
+              <strong>Tip:</strong> Wait for running experiments to complete, or ask your
+              administrator to increase the <code>CHAOS_K8S_MAX_CONCURRENT</code> limit.
+            </>
+          ) : (
+            executeError || 'Failed to start experiment. Please try again.'
+          )}
         </Alert>
       )}
       {stopStatus === 'succeeded' && actionExperimentId && (
@@ -714,7 +780,7 @@ const ExperimentListPage: React.FC = () => {
       )}
       {stopStatus === 'failed' && (
         <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>
-          Failed to stop experiment. Please try again.
+          {stopError || 'Failed to stop experiment. Please refresh and try again.'}
         </Alert>
       )}
 
@@ -1016,8 +1082,8 @@ const ExperimentListPage: React.FC = () => {
                 {SORT_COLUMNS.map((column) => (
                   <TableCell key={column.id}>
                     <TableSortLabel
-                      active={sort.sortBy === column.id}
-                      direction={sort.sortBy === column.id ? sort.sortOrder : 'asc'}
+                      active={sortBy === column.id}
+                      direction={sortBy === column.id ? sortOrder : 'asc'}
                       onClick={() => handleSortChange(column.id)}
                       sx={{
                         '&.Mui-active': {

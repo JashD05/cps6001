@@ -1,6 +1,12 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
 import type { AuthState, User, LoginRequest, LoginResponse } from '@/types';
-import { authAPI, setTokens, clearTokens, getRefreshToken } from '@/services/api';
+import {
+  authAPI,
+  setTokens,
+  clearTokens,
+  getRefreshToken,
+  emitAuthSessionExpired,
+} from '@/services/api';
 
 // ---------------------------------------------------------------------------
 // Async Thunks
@@ -11,14 +17,80 @@ export const login = createAsyncThunk(
   async (credentials: LoginRequest, { rejectWithValue }) => {
     try {
       const response = await authAPI.login(credentials);
-      const { accessToken, refreshToken, user } = response.data.data;
+      // The backend returns tokens in snake_case directly (no data wrapper):
+      // { access_token, refresh_token, expires_in, token_type }
+      // but the /me endpoint returns { data: { ... } }.
+      // Handle both formats so login always works.
+      const resData = response.data as unknown as Record<string, unknown>;
+      const accessToken = (resData.accessToken ?? resData.access_token) as string;
+      const refreshToken = (resData.refreshToken ?? resData.refresh_token) as string;
+      const expiresIn = (resData.expiresIn ?? resData.expires_in ?? 3600) as number;
+      const tokenType = (resData.tokenType ?? resData.token_type ?? 'Bearer') as string;
+
       setTokens(accessToken, refreshToken);
-      return { accessToken, refreshToken, user } as LoginResponse;
+
+      // Fetch the user profile now that we have tokens
+      let user: User | null = null;
+      try {
+        const meResponse = await authAPI.me();
+        user = meResponse.data.data as User;
+      } catch {
+        // If /me fails we still proceed — user will be fetched later by ProtectedRoute
+      }
+
+      return { accessToken, refreshToken, expiresIn, tokenType, user } as LoginResponse;
     } catch (error: unknown) {
       let message = 'Login failed. Please check your credentials.';
       if (error && typeof error === 'object' && 'response' in error) {
-        const axiosError = error as { response?: { data?: { message?: string } } };
-        message = axiosError.response?.data?.message ?? message;
+        const axiosError = error as {
+          response?: { data?: { message?: string; error?: string } };
+        };
+        message =
+          axiosError.response?.data?.message ??
+          axiosError.response?.data?.error ??
+          message;
+      }
+      return rejectWithValue(message);
+    }
+  },
+);
+
+export const register = createAsyncThunk(
+  'auth/register',
+  async (
+    data: { name: string; email: string; password: string; organization: string },
+    { rejectWithValue },
+  ) => {
+    try {
+      const response = await authAPI.register(data);
+      const resData = response.data as unknown as Record<string, unknown>;
+      const accessToken = (resData.accessToken ?? resData.access_token) as string;
+      const refreshToken = (resData.refreshToken ?? resData.refresh_token) as string;
+      const expiresIn = (resData.expiresIn ?? resData.expires_in ?? 3600) as number;
+      const tokenType = (resData.tokenType ?? resData.token_type ?? 'Bearer') as string;
+
+      setTokens(accessToken, refreshToken);
+
+      // Fetch the user profile now that we have tokens
+      let user: User | null = null;
+      try {
+        const meResponse = await authAPI.me();
+        user = meResponse.data.data as User;
+      } catch {
+        // If /me fails we still proceed — user will be fetched later by ProtectedRoute
+      }
+
+      return { accessToken, refreshToken, expiresIn, tokenType, user } as LoginResponse;
+    } catch (error: unknown) {
+      let message = 'Registration failed. Please try again.';
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as {
+          response?: { data?: { message?: string; error?: string } };
+        };
+        message =
+          axiosError.response?.data?.message ??
+          axiosError.response?.data?.error ??
+          message;
       }
       return rejectWithValue(message);
     }
@@ -51,7 +123,10 @@ export const refreshToken = createAsyncThunk(
         throw new Error('No refresh token available');
       }
       const response = await authAPI.refresh(currentRefreshToken);
-      const { accessToken, refreshToken: newRefreshToken } = response.data.data;
+      // The backend returns tokens in snake_case directly (no data wrapper).
+      const resData = response.data as unknown as Record<string, unknown>;
+      const accessToken = (resData.accessToken ?? resData.access_token) as string;
+      const newRefreshToken = (resData.refreshToken ?? resData.refresh_token) as string;
       setTokens(accessToken, newRefreshToken);
       return { accessToken, refreshToken: newRefreshToken } as {
         accessToken: string;
@@ -67,6 +142,7 @@ export const refreshToken = createAsyncThunk(
       if (error instanceof Error && error.message === 'No refresh token available') {
         message = error.message;
       }
+      emitAuthSessionExpired(message);
       return rejectWithValue(message);
     }
   },
@@ -101,7 +177,7 @@ const initialState: AuthState = {
   user: null,
   accessToken: null,
   refreshToken: null,
-  isAuthenticated: true,
+  isAuthenticated: false,
   isLoading: false,
   error: null,
 };
@@ -147,7 +223,7 @@ const authSlice = createSlice({
     });
     builder.addCase(login.fulfilled, (state, action: PayloadAction<LoginResponse>) => {
       state.isLoading = false;
-      state.isAuthenticated = true;
+      state.isAuthenticated = action.payload.user !== null;
       state.user = action.payload.user;
       state.accessToken = action.payload.accessToken;
       state.refreshToken = action.payload.refreshToken;
@@ -160,6 +236,25 @@ const authSlice = createSlice({
       state.accessToken = null;
       state.refreshToken = null;
       state.error = (action.payload as string) ?? action.error.message ?? 'Login failed';
+    });
+
+    // Register
+    builder.addCase(register.pending, (state) => {
+      state.isLoading = true;
+      state.error = null;
+    });
+    builder.addCase(register.fulfilled, (state, action: PayloadAction<LoginResponse>) => {
+      state.isLoading = false;
+      state.user = action.payload.user;
+      state.isAuthenticated = true;
+      state.accessToken = action.payload.accessToken;
+      state.refreshToken = action.payload.refreshToken;
+      state.error = null;
+    });
+    builder.addCase(register.rejected, (state, action) => {
+      state.isLoading = false;
+      state.error =
+        (action.payload as string) ?? action.error.message ?? 'Registration failed';
     });
 
     // Logout

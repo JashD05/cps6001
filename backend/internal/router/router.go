@@ -122,6 +122,12 @@ func New(
 		opt(r)
 	}
 
+	// Wire up the experiment engine to the handler so StopExperiment
+	// can cancel running experiments via context cancellation.
+	if r.expEngine != nil {
+		r.expHandler.SetEngine(r.expEngine)
+	}
+
 	// Register global middleware and route groups.
 	r.registerGlobalMiddleware()
 	r.registerHealthRoutes()
@@ -209,6 +215,14 @@ func (r *Router) registerAPIRoutes() {
 			experiments.POST("/:id/stop",
 				r.middleware.RBACMiddleware("experiments:execute"),
 				r.expHandler.StopExperiment,
+			)
+			experiments.GET("/:id/runs",
+				r.middleware.RBACMiddleware("experiments:read"),
+				r.expHandler.GetExperimentRuns,
+			)
+			experiments.GET("/:id/logs",
+				r.middleware.RBACMiddleware("experiments:read"),
+				r.expHandler.GetExperimentLogs,
 			)
 		}
 
@@ -309,7 +323,23 @@ func (r *Router) registerAPIRoutes() {
 		reports := v1.Group("/reports")
 		reports.Use(r.middleware.AuthMiddleware())
 		{
-			reports.GET("/:experimentId",
+			reports.GET("",
+				r.middleware.RBACMiddleware("experiments:read"),
+				r.listReports,
+			)
+			reports.POST("",
+				r.middleware.RBACMiddleware("experiments:write"),
+				r.expHandler.GenerateReport,
+			)
+			reports.GET("/:id",
+				r.middleware.RBACMiddleware("experiments:read"),
+				r.getReport,
+			)
+			reports.DELETE("/:id",
+				r.middleware.RBACMiddleware("experiments:write"),
+				r.deleteReport,
+			)
+			reports.GET("/experiment/:experimentId",
 				r.middleware.RBACMiddleware("experiments:read"),
 				r.getExperimentReport,
 			)
@@ -961,31 +991,39 @@ func (r *Router) dashboardSummary(c *gin.Context) {
 	orgID := claims.OrganizationID
 
 	// Total experiments.
-	_ = r.db.QueryRowContext(ctx,
+	if err := r.db.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM experiments WHERE organization_id = $1", orgID,
-	).Scan(&summary.TotalExperiments)
+	).Scan(&summary.TotalExperiments); err != nil {
+		r.logger.Error("failed to query total experiments for dashboard", zap.Error(err))
+	}
 
 	// Active experiments.
-	_ = r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM experiments WHERE organization_id = $1 AND status = 'active'", orgID,
-	).Scan(&summary.ActiveExperiments)
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM experiments WHERE organization_id = $1 AND status IN ('active', 'running')", orgID,
+	).Scan(&summary.ActiveExperiments); err != nil {
+		r.logger.Error("failed to query active experiments for dashboard", zap.Error(err))
+	}
 
 	// Total runs.
-	_ = r.db.QueryRowContext(ctx, `
+	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM experiment_runs er
 		JOIN experiments e ON e.id = er.experiment_id
 		WHERE e.organization_id = $1
-	`, orgID).Scan(&summary.TotalRuns)
+	`, orgID).Scan(&summary.TotalRuns); err != nil {
+		r.logger.Error("failed to query total runs for dashboard", zap.Error(err))
+	}
 
 	// Runs in last 24 hours.
-	_ = r.db.QueryRowContext(ctx, `
+	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM experiment_runs er
 		JOIN experiments e ON e.id = er.experiment_id
 		WHERE e.organization_id = $1 AND er.created_at >= NOW() - INTERVAL '24 hours'
-	`, orgID).Scan(&summary.RunsLast24h)
+	`, orgID).Scan(&summary.RunsLast24h); err != nil {
+		r.logger.Error("failed to query runs in last 24h for dashboard", zap.Error(err))
+	}
 
 	// Pass rate across all test results.
-	_ = r.db.QueryRowContext(ctx, `
+	if err := r.db.QueryRowContext(ctx, `
 		SELECT COALESCE(
 			ROUND(100.0 * COUNT(CASE WHEN tr.status = 'passed' THEN 1 END) / NULLIF(COUNT(*), 0), 2),
 			0
@@ -994,7 +1032,9 @@ func (r *Router) dashboardSummary(c *gin.Context) {
 		JOIN experiment_runs er ON er.id = tr.run_id
 		JOIN experiments e ON e.id = er.experiment_id
 		WHERE e.organization_id = $1
-	`, orgID).Scan(&summary.PassRate)
+	`, orgID).Scan(&summary.PassRate); err != nil {
+		r.logger.Error("failed to query pass rate for dashboard", zap.Error(err))
+	}
 
 	// Recent runs (last 10).
 	rows, err := r.db.QueryContext(ctx, `
@@ -1025,6 +1065,24 @@ func (r *Router) dashboardSummary(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, summary)
+}
+
+// listReports lists all reports for an organization.
+// GET /api/v1/reports
+func (r *Router) listReports(c *gin.Context) {
+	r.expHandler.ListReports(c)
+}
+
+// getReport retrieves a single report by ID.
+// GET /api/v1/reports/:id
+func (r *Router) getReport(c *gin.Context) {
+	r.expHandler.GetReport(c)
+}
+
+// deleteReport deletes a report by ID.
+// DELETE /api/v1/reports/:id
+func (r *Router) deleteReport(c *gin.Context) {
+	r.expHandler.DeleteReport(c)
 }
 
 // getExperimentReport generates a detailed report for a specific experiment.

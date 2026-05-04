@@ -1,9 +1,12 @@
-import React, { Suspense, type ReactNode } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import React, { Suspense, type ReactNode, useEffect } from 'react';
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress, Typography } from '@mui/material';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { ToastProvider } from '@/services/toast';
+import { useDispatch } from 'react-redux';
+import { clearAuth } from '@/store/authSlice';
+import { resetStore, type AppDispatch } from '@/store';
 
 // ---------------------------------------------------------------------------
 // Lazy-loaded page components for code splitting
@@ -52,12 +55,47 @@ const LazyPage: React.FC<{ children: ReactNode }> = ({ children }) => (
 );
 
 // ---------------------------------------------------------------------------
+// Auth session watcher
+// ---------------------------------------------------------------------------
+
+const AuthSessionWatcher: React.FC = () => {
+  const dispatch = useDispatch<AppDispatch>();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleAuthExpired = (event: Event) => {
+      const detail = (event as CustomEvent<{ reason?: string }>).detail;
+      dispatch(clearAuth());
+      dispatch(resetStore());
+
+      const redirectTo = encodeURIComponent(location.pathname + location.search);
+      const loginUrl = `/login?redirect=${redirectTo}&expired=1`;
+
+      if (location.pathname !== '/login') {
+        navigate(loginUrl, { replace: true });
+      }
+
+      if (import.meta.env.DEV) {
+        console.warn('[Chaos-Sec] auth session expired', detail?.reason ?? 'unknown');
+      }
+    };
+
+    window.addEventListener('chaos-sec:auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('chaos-sec:auth-expired', handleAuthExpired);
+  }, [dispatch, location.pathname, location.search, navigate]);
+
+  return null;
+};
+
+// ---------------------------------------------------------------------------
 // App Component
 // ---------------------------------------------------------------------------
 
 const App: React.FC = () => {
   return (
     <ToastProvider defaultPosition="bottom-right" maxToasts={5}>
+      <AuthSessionWatcher />
       <Routes>
         {/* ----------------------------------------------------------------- */}
         {/* Public Routes – no authentication required                        */}

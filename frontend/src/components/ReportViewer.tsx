@@ -185,126 +185,6 @@ const SEVERITY_CONFIG: Record<
 const TAB_LABELS = ['Summary', 'Runs', 'Results', 'Findings'] as const;
 
 // ---------------------------------------------------------------------------
-// Mock Data (will be replaced by API calls in production)
-// ---------------------------------------------------------------------------
-
-const MOCK_REPORT_CONTENT: ReportContent = {
-  experimentDetails: {
-    name: 'DNS Exfiltration Attack Simulation',
-    id: 'exp-004',
-    status: 'completed',
-    description:
-      'Simulates a DNS data exfiltration attack to validate network monitoring and SIEM detection capabilities.',
-    createdAt: '2024-01-20T10:00:00Z',
-    startedAt: '2024-01-20T10:05:00Z',
-    completedAt: '2024-01-20T10:35:00Z',
-    clusterName: 'production-us-east',
-    namespace: 'chaos-sec',
-    templateName: 'DNS Exfiltration',
-  },
-  runs: [
-    {
-      runNumber: 1,
-      id: 'run-001',
-      status: 'completed',
-      startedAt: '2024-01-20T10:05:00Z',
-      duration: 180,
-      result: 'Attack detected',
-    },
-    {
-      runNumber: 2,
-      id: 'run-002',
-      status: 'completed',
-      startedAt: '2024-01-20T10:15:00Z',
-      duration: 165,
-      result: 'Attack blocked',
-    },
-    {
-      runNumber: 3,
-      id: 'run-003',
-      status: 'failed',
-      startedAt: '2024-01-20T10:25:00Z',
-      duration: 0,
-      result: 'Pod error',
-    },
-    {
-      runNumber: 4,
-      id: 'run-004',
-      status: 'completed',
-      startedAt: '2024-01-20T10:26:00Z',
-      duration: 200,
-      result: 'Attack detected',
-    },
-  ],
-  resultsSummary: {
-    totalPods: 8,
-    successfulAttacks: 2,
-    blockedAttacks: 2,
-    detectionRate: 0.75,
-    overallScore: 82,
-  },
-  findings: [
-    {
-      id: 'f-001',
-      title: 'DNS tunneling not blocked by firewall',
-      description:
-        'The attack pod was able to establish DNS tunnels to external servers without being blocked by the network firewall rules.',
-      severity: 'critical',
-      category: 'Network Security',
-      recommendation:
-        'Update firewall rules to block DNS tunneling patterns and implement DNS query length limits.',
-    },
-    {
-      id: 'f-002',
-      title: 'SIEM alert triggered within expected time window',
-      description:
-        'The SIEM system successfully generated an alert within 30 seconds of the DNS exfiltration attempt.',
-      severity: 'info',
-      category: 'SIEM Detection',
-      recommendation: 'No action required. Detection is working as expected.',
-    },
-    {
-      id: 'f-003',
-      title: 'Pod security policies insufficient',
-      description:
-        'Attack pods were able to execute privileged operations that should be restricted by pod security standards.',
-      severity: 'high',
-      category: 'Pod Security',
-      recommendation:
-        'Enforce Pod Security Standards at the "restricted" level for the chaos-sec namespace.',
-    },
-    {
-      id: 'f-004',
-      title: 'Network policies allow broad egress',
-      description:
-        'Default network policies allow all egress traffic, enabling data exfiltration paths.',
-      severity: 'medium',
-      category: 'Network Policy',
-      recommendation:
-        'Implement default-deny egress network policies and explicitly allow only required outbound connections.',
-    },
-    {
-      id: 'f-005',
-      title: 'Rate limiting not configured for DNS queries',
-      description:
-        'No rate limiting was observed on DNS queries, allowing high-volume data exfiltration.',
-      severity: 'low',
-      category: 'Rate Limiting',
-      recommendation:
-        'Configure DNS query rate limiting at the cluster level to prevent data exfiltration.',
-    },
-  ],
-  siemValidation: {
-    provider: 'Splunk',
-    expectedAlerts: 4,
-    receivedAlerts: 3,
-    detected: true,
-    detectionLatencyMs: 12500,
-    coverage: 0.75,
-  },
-};
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -963,35 +843,46 @@ const ReportViewer: React.FC<ReportViewerProps> = ({
     setError(null);
 
     try {
-      // In production: const response = await reportsAPI.getById(reportId);
-      // For now, use mock data
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      const response = await reportsAPI.getById(reportId);
+      const apiReport: any = response.data.data;
+      const fetchedReport: Report = apiReport
+        ? {
+            id: apiReport.id,
+            title: apiReport.title,
+            type: apiReport.type,
+            format: reportFormat,
+            description: apiReport.description ?? '',
+            experimentIds: apiReport.experiment_ids ?? apiReport.experimentIds ?? [],
+            dateRange: {
+              from: apiReport.date_range?.from ?? apiReport.dateRange?.from ?? '',
+              to: apiReport.date_range?.to ?? apiReport.dateRange?.to ?? '',
+            },
+            status: apiReport.status ?? 'ready',
+            downloadUrl:
+              apiReport.download_url ??
+              apiReport.downloadUrl ??
+              `/reports/${reportId}/download`,
+            fileSize: apiReport.file_size ?? apiReport.fileSize ?? 0,
+            generatedBy: apiReport.generated_by ?? apiReport.generatedBy ?? '',
+            createdAt: apiReport.created_at ?? apiReport.createdAt ?? '',
+          }
+        : {
+            id: reportId,
+            title: 'Report',
+            type: 'experiment',
+            format: reportFormat,
+            description: '',
+            experimentIds: [],
+            dateRange: { from: '', to: '' },
+            status: 'ready',
+            downloadUrl: `/reports/${reportId}/download`,
+            fileSize: 0,
+            generatedBy: '',
+            createdAt: '',
+          };
 
-      const mockReport: Report = {
-        id: reportId,
-        title: 'DNS Exfiltration Attack Simulation',
-        type: 'experiment',
-        format: reportFormat,
-        description:
-          'Detailed results from the DNS exfiltration attack simulation, including run-by-run analysis and SIEM validation.',
-        experimentIds: ['exp-004'],
-        dateRange: { from: '2024-01-20', to: '2024-01-20' },
-        status: 'ready',
-        downloadUrl: `/reports/${reportId}/download`,
-        fileSize: 1_234_567,
-        generatedBy: 'operator@chaos-sec.io',
-        createdAt: '2024-01-20T14:15:00Z',
-      };
-
-      setReport(mockReport);
-
-      // For JSON format, also load structured content
-      if (reportFormat === 'json') {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        setReportContent(MOCK_REPORT_CONTENT);
-      } else {
-        setReportContent(null);
-      }
+      setReport(fetchedReport);
+      setReportContent(null);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -1044,16 +935,25 @@ const ReportViewer: React.FC<ReportViewerProps> = ({
   }, [report, reportContent, reportFormat]);
 
   const handleDownload = useCallback(async () => {
-    if (!report?.downloadUrl) return;
+    if (!report) return;
     try {
-      // In production: const blob = await reportsAPI.download(report.id, reportFormat);
-      // For now, simulate download
+      const response = await reportsAPI.download(report.id, reportFormat);
+      const blob = new Blob([response.data], {
+        type:
+          reportFormat === 'pdf'
+            ? 'application/pdf'
+            : reportFormat === 'html'
+              ? 'text/html'
+              : 'application/json',
+      });
+      const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = report.downloadUrl;
+      link.href = url;
       link.download = `${report.title.replace(/\s+/g, '_')}.${reportFormat}`;
       link.click();
+      window.URL.revokeObjectURL(url);
     } catch {
-      // Download failed silently
+      // Download failed — could show a snackbar error
     }
   }, [report, reportFormat]);
 

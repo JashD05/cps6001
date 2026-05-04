@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   Box,
@@ -27,6 +27,9 @@ import {
   LinearProgress,
   Stack,
   Paper,
+  Dialog,
+  DialogContent,
+  InputBase,
 } from '@mui/material';
 import {
   Dashboard as DashboardIcon,
@@ -52,9 +55,11 @@ import {
   Error as ErrorIcon,
   FiberManualRecord as DotIcon,
   HelpOutline as HelpIcon,
+  Search as SearchIcon,
 } from '@mui/icons-material';
 import { useDispatch, useSelector } from 'react-redux';
 import { logout, selectCurrentUser } from '@/store/authSlice';
+import { fetchExperiments, selectExperimentList } from '@/store/experimentSlice';
 import type { AppDispatch } from '@/store';
 
 // ---------------------------------------------------------------------------
@@ -301,9 +306,37 @@ export default function Layout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [userMenuAnchor, setUserMenuAnchor] = useState<HTMLElement | null>(null);
   const [notifAnchor, setNotifAnchor] = useState<HTMLElement | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const experiments = useSelector(selectExperimentList);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const unreadCount = MOCK_NOTIFICATIONS.filter((n) => !n.read).length;
   const currentPath = location.pathname;
+
+  // Keyboard shortcut: Cmd+K / Ctrl+K to open search, Escape to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+      if (e.key === 'Escape' && searchOpen) {
+        setSearchOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [searchOpen]);
+
+  // Debounced search effect
+  useEffect(() => {
+    if (!searchQuery.trim()) return;
+    const timer = setTimeout(() => {
+      dispatch(fetchExperiments({ search: searchQuery, limit: 10 }));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, dispatch]);
 
   const handleNavigate = (path: string) => {
     navigate(path);
@@ -732,8 +765,9 @@ export default function Layout() {
               </Typography>
             </Box>
 
-            {/* Search (placeholder) */}
+            {/* Global Search */}
             <Box
+              onClick={() => setSearchOpen(true)}
               sx={{
                 display: { xs: 'none', lg: 'flex' },
                 alignItems: 'center',
@@ -781,6 +815,104 @@ export default function Layout() {
                 ⌘K
               </Typography>
             </Box>
+
+            {/* Search Dialog */}
+            <Dialog
+              open={searchOpen}
+              onClose={() => {
+                setSearchOpen(false);
+                setSearchQuery('');
+              }}
+              maxWidth="sm"
+              fullWidth
+              PaperProps={{
+                sx: {
+                  mt: '10vh',
+                  borderRadius: 3,
+                  maxHeight: '60vh',
+                },
+              }}
+            >
+              <DialogContent sx={{ p: 0 }}>
+                <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
+                  <Stack direction="row" alignItems="center" spacing={1.5}>
+                    <SearchIcon sx={{ color: 'text.secondary' }} />
+                    <InputBase
+                      inputRef={searchInputRef}
+                      autoFocus
+                      placeholder="Search experiments, templates..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      sx={{ flex: 1, fontSize: '1rem' }}
+                    />
+                  </Stack>
+                </Box>
+
+                {searchQuery.trim() ? (
+                  experiments.length > 0 ? (
+                    <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
+                      {experiments.map((exp) => (
+                        <Box
+                          key={exp.id}
+                          onClick={() => {
+                            navigate(`/experiments/${exp.id}`);
+                            setSearchOpen(false);
+                            setSearchQuery('');
+                          }}
+                          sx={{
+                            px: 2,
+                            py: 1.5,
+                            cursor: 'pointer',
+                            '&:hover': {
+                              backgroundColor:
+                                theme.palette.mode === 'dark'
+                                  ? 'rgba(255,255,255,0.05)'
+                                  : 'rgba(0,0,0,0.04)',
+                            },
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                          }}
+                        >
+                          <Typography variant="body2" fontWeight={600}>
+                            {exp.name}
+                          </Typography>
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                            mt={0.25}
+                          >
+                            <Chip
+                              label={exp.status}
+                              size="small"
+                              variant="outlined"
+                              sx={{ fontSize: '0.6875rem', height: 20 }}
+                            />
+                            {exp.templateName && (
+                              <Typography variant="caption" color="text.secondary">
+                                {exp.templateName}
+                              </Typography>
+                            )}
+                          </Stack>
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Box sx={{ py: 4, textAlign: 'center' }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No experiments found matching &quot;{searchQuery}&quot;
+                      </Typography>
+                    </Box>
+                  )
+                ) : (
+                  <Box sx={{ py: 4, textAlign: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Start typing to search...
+                    </Typography>
+                  </Box>
+                )}
+              </DialogContent>
+            </Dialog>
 
             <Box sx={{ flex: 0, display: 'flex', alignItems: 'center', gap: 0.5 }}>
               {/* Notifications */}

@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/chaos-sec/backend/internal/kubernetes"
 	"github.com/chaos-sec/backend/internal/models"
 	"github.com/chaos-sec/backend/internal/siem"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -61,6 +63,9 @@ type Engine struct {
 	k8sManager    *kubernetes.ClientManager
 	siemValidator *siem.Validator
 	logger        *zap.Logger
+	// cancelFuncs tracks running experiments by runID, allowing StopExperiment
+	// to cancel the context of a running experiment for prompt termination.
+	cancelFuncs sync.Map // map[uuid.UUID]context.CancelFunc
 	// Per-run cluster controllers (set by initForCluster before each run).
 	clusterClient *kubernetes.ClusterClient
 	podCtrl       *kubernetes.PodController
@@ -180,6 +185,24 @@ func (e *Engine) ExecuteExperiment(
 		zap.String("user_id", userID.String()),
 	)
 
+	// Create a derived context that can be cancelled by StopExperiment.
+	// This allows prompt termination of long-running operations like
+	// WaitForPodReady or SIEM validation when a user requests a stop.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // Ensure context is cancelled when ExecuteExperiment returns
+
+	// We need the runID to register the cancel func, so we load/create the run first,
+	// then register. The cancel func is deregistered on exit via a deferred cleanup.
+	var runID uuid.UUID
+	defer func() {
+		if runID != uuid.Nil {
+			e.cancelFuncs.Delete(runID)
+			e.logger.Debug("deregistered cancel func for experiment run",
+				zap.String("run_id", runID.String()),
+			)
+		}
+	}()
+
 	// Step 1: Load experiment from DB.
 	experiment, err := e.loadExperiment(ctx, experimentID)
 	if err != nil {
@@ -199,8 +222,16 @@ func (e *Engine) ExecuteExperiment(
 	// Step 3: Find or create the experiment run record.
 	run, err := e.findOrCreateRun(ctx, experiment, userID)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to create experiment run: %w", err)
 	}
+
+	// Register the cancel func so StopExperiment can cancel this context.
+	runID = run.ID
+	e.cancelFuncs.Store(runID, cancel)
+	e.logger.Info("registered cancel func for experiment run",
+		zap.String("run_id", runID.String()),
+	)
 
 	// Check for stop signal before starting.
 	if e.isStopRequested(ctx, run.ID) {
@@ -247,6 +278,16 @@ func (e *Engine) ExecuteExperiment(
 	successfulSteps := 0
 	failedSteps := 0
 
+	siemValidator := e.siemValidator
+	// In dry-run mode (no real Kubernetes client), skip SIEM validation so
+	// experiments complete quickly instead of waiting on time-based checks.
+	if podCtrl == nil && siemValidator != nil {
+		e.logger.Info("dry-run mode detected; skipping SIEM validation for faster completion",
+			zap.String("experiment_id", experimentID.String()),
+		)
+		siemValidator = nil
+	}
+
 	// Step 4: Execute each template step sequentially.
 	for i, tmpl := range templates {
 		stepName := fmt.Sprintf("Step %d: %s", tmpl.OrderIndex, e.templateName(ctx, tmpl))
@@ -283,7 +324,7 @@ func (e *Engine) ExecuteExperiment(
 		}
 
 		attackPods, testResults, siemValidations, stepErr := e.executeStep(
-			ctx, run, tmpl, podCtrl, nsMgr,
+			ctx, run, tmpl, podCtrl, nsMgr, siemValidator,
 		)
 
 		stepComplete := time.Now()
@@ -377,14 +418,30 @@ func (e *Engine) ExecuteExperiment(
 }
 
 // StopExperiment stops a running experiment by:
-//  1. Deleting all attacker pods
-//  2. Cleaning up namespaces
-//  3. Updating the run status to "cancelled"
+//  1. Cancelling the execution context (prompts immediate termination)
+//  2. Signalling stop via Redis (fallback for goroutines checking isStopRequested)
+//  3. Cleaning up K8s resources (attacker pods, namespaces)
+//  4. Updating the run status to "cancelled"
 func (e *Engine) StopExperiment(ctx context.Context, runID uuid.UUID) error {
 	e.logger.Info("stopping experiment", zap.String("run_id", runID.String()))
 
-	// Signal the stop via Redis so the running ExecuteExperiment goroutine
-	// can check it and exit gracefully.
+	// Step 1: Cancel the running experiment's context for prompt termination.
+	// This unblocks any long-running operations (WaitForPodReady, SIEM validation, etc.)
+	// that are listening on ctx.Done().
+	if cancelFunc, ok := e.cancelFuncs.LoadAndDelete(runID); ok {
+		cancel := cancelFunc.(context.CancelFunc)
+		cancel()
+		e.logger.Info("cancelled execution context for experiment run",
+			zap.String("run_id", runID.String()),
+		)
+	} else {
+		e.logger.Debug("no running cancel func found for experiment run; may already be stopped or not yet started",
+			zap.String("run_id", runID.String()),
+		)
+	}
+
+	// Step 2: Signal the stop via Redis so the running ExecuteExperiment goroutine
+	// can check it and exit gracefully (fallback mechanism).
 	if e.rdb != nil {
 		stopKey := fmt.Sprintf("experiment:stop:%s", runID.String())
 		if err := e.rdb.Set(ctx, stopKey, "1", 30*time.Minute).Err(); err != nil {
@@ -395,7 +452,7 @@ func (e *Engine) StopExperiment(ctx context.Context, runID uuid.UUID) error {
 		}
 	}
 
-	// Load the run to get its attack pods.
+	// Step 3: Load the run to get its attack pods for cleanup.
 	attackPods, err := e.loadAttackPods(ctx, runID)
 	if err != nil {
 		e.logger.Error("failed to load attack pods for cleanup",
@@ -404,7 +461,7 @@ func (e *Engine) StopExperiment(ctx context.Context, runID uuid.UUID) error {
 		)
 	}
 
-	// Attempt K8s cleanup if a cluster is available.
+	// Step 4: Attempt K8s cleanup if a cluster is available.
 	run, loadErr := e.loadRun(ctx, runID)
 	if loadErr == nil && e.k8sManager != nil {
 		clusterID := run.ClusterID.String()
@@ -415,7 +472,7 @@ func (e *Engine) StopExperiment(ctx context.Context, runID uuid.UUID) error {
 		}
 	}
 
-	// Update run status to cancelled.
+	// Step 5: Update run status to cancelled.
 	now := time.Now()
 	if err := e.updateRunCancelled(ctx, runID, now); err != nil {
 		return fmt.Errorf("failed to update run status to cancelled: %w", err)
@@ -481,6 +538,7 @@ func (e *Engine) executeStep(
 	tmpl models.ExperimentTemplate,
 	podCtrl *kubernetes.PodController,
 	nsMgr *kubernetes.NamespaceManager,
+	siemValidator *siem.Validator,
 ) ([]models.AttackPod, []models.TestResult, []models.SIEMValidation, error) {
 	var attackPods []models.AttackPod
 	var testResults []models.TestResult
@@ -540,6 +598,19 @@ func (e *Engine) executeStep(
 		attackPods = append(attackPods, attackPodRecord)
 
 		// c. Wait for pod to be ready.
+		// Check for stop request before entering the potentially long WaitForPodReady call.
+		if ctx.Err() != nil || e.isStopRequested(ctx, run.ID) {
+			e.logger.Info("stop requested before waiting for pod ready, cancelling step",
+				zap.String("run_id", run.ID.String()),
+			)
+			_ = podCtrl.ForceDeletePod(ctx, podName, nsName)
+			_ = nsMgr.DeleteNamespace(ctx, nsName)
+			attackPodRecord.Status = StatusCancelled
+			terminatedAt := time.Now()
+			attackPodRecord.TerminatedAt = &terminatedAt
+			e.updateAttackPodRecord(ctx, attackPodRecord)
+			return attackPods, testResults, siemValidations, fmt.Errorf("cancelled by user before waiting for pod ready")
+		}
 		waitErr := podCtrl.WaitForPodReady(ctx, podName, nsName,
 			time.Duration(tmpl.DurationSeconds)*time.Second,
 		)
@@ -593,6 +664,19 @@ func (e *Engine) executeStep(
 		})
 
 		// d. Execute attack command (if the manifest defines one).
+		// Check for stop request before executing the attack.
+		if ctx.Err() != nil || e.isStopRequested(ctx, run.ID) {
+			e.logger.Info("stop requested before attack execution, cancelling step",
+				zap.String("run_id", run.ID.String()),
+			)
+			_ = podCtrl.ForceDeletePod(ctx, podName, nsName)
+			_ = nsMgr.DeleteNamespace(ctx, nsName)
+			attackPodRecord.Status = StatusCancelled
+			terminatedAt := time.Now()
+			attackPodRecord.TerminatedAt = &terminatedAt
+			e.updateAttackPodRecord(ctx, attackPodRecord)
+			return attackPods, testResults, siemValidations, fmt.Errorf("cancelled by user before attack execution")
+		}
 		attackOutput, attackErr := e.executeAttack(ctx, podCtrl, podName, nsName, attackTmpl)
 		if attackErr != nil {
 			e.logger.Warn("attack execution produced an error",
@@ -671,14 +755,21 @@ func (e *Engine) executeStep(
 	}
 
 	// f. Query SIEM for alerts and g. Validate alerts against expectations.
-	if e.siemValidator != nil && len(tmpl.SIEMValidation) > 0 {
+	// Check for stop request before performing potentially long SIEM validation.
+	if ctx.Err() != nil || e.isStopRequested(ctx, run.ID) {
+		e.logger.Info("stop requested before SIEM validation, skipping",
+			zap.String("run_id", run.ID.String()),
+		)
+		return attackPods, testResults, siemValidations, fmt.Errorf("cancelled by user before SIEM validation")
+	}
+	if siemValidator != nil && len(tmpl.SIEMValidation) > 0 {
 		expectedAlerts, parseErr := siem.ExpectedAlertsFromValidation(tmpl.SIEMValidation)
 		if parseErr != nil {
 			e.logger.Error("failed to parse SIEM validation config",
 				zap.Error(parseErr),
 			)
 		} else if len(expectedAlerts) > 0 {
-			validationResult, validateErr := e.siemValidator.ValidateDetection(ctx, run, expectedAlerts)
+			validationResult, validateErr := siemValidator.ValidateDetection(ctx, run, expectedAlerts)
 			if validateErr != nil {
 				e.logger.Error("SIEM validation failed",
 					zap.String("run_id", run.ID.String()),
@@ -850,15 +941,17 @@ func (e *Engine) loadExperimentTemplates(ctx context.Context, experimentID uuid.
 	var templates []models.ExperimentTemplate
 	for rows.Next() {
 		var et models.ExperimentTemplate
+		var targetNamespacesOut pq.StringArray
 		if err := rows.Scan(
 			&et.ID, &et.ExperimentID, &et.AttackTemplateID,
 			&et.OrderIndex, &et.Configuration,
-			&et.TargetNamespaces, &et.TargetLabels,
+			&targetNamespacesOut, &et.TargetLabels,
 			&et.DurationSeconds, &et.CleanupPolicy,
 			&et.SIEMValidation, &et.Enabled, &et.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan experiment template: %w", err)
 		}
+		et.TargetNamespaces = []string(targetNamespacesOut)
 		templates = append(templates, et)
 	}
 
@@ -924,6 +1017,7 @@ func (e *Engine) findOrCreateRun(ctx context.Context, exp *models.Experiment, us
 	triggeredBy := userID
 
 	var newRun models.ExperimentRun
+	var resultSummary sql.NullString
 	err = e.db.QueryRowContext(ctx, `
 		INSERT INTO experiment_runs (experiment_id, cluster_id, run_number, status, triggered_by, trigger_type)
 		VALUES ($1, $2, $3, 'pending', $4, $5)
@@ -932,11 +1026,14 @@ func (e *Engine) findOrCreateRun(ctx context.Context, exp *models.Experiment, us
 	`, exp.ID, clusterID, nextRunNumber, &triggeredBy, triggerType).Scan(
 		&newRun.ID, &newRun.ExperimentID, &newRun.ClusterID, &newRun.RunNumber, &newRun.Status,
 		&newRun.TriggeredBy, &newRun.TriggerType,
-		&newRun.StartedAt, &newRun.CompletedAt, &newRun.DurationMs, &newRun.ResultSummary,
+		&newRun.StartedAt, &newRun.CompletedAt, &newRun.DurationMs, &resultSummary,
 		&newRun.ErrorMessage, &newRun.CleanupStatus, &newRun.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert experiment run: %w", err)
+	}
+	if resultSummary.Valid {
+		newRun.ResultSummary = json.RawMessage(resultSummary.String)
 	}
 
 	return &newRun, nil
@@ -954,6 +1051,7 @@ func (e *Engine) updateRunCancelled(ctx context.Context, runID uuid.UUID, cancel
 // findActiveRun finds the most recent pending or running run for an experiment.
 func (e *Engine) findActiveRun(ctx context.Context, experimentID uuid.UUID) (*models.ExperimentRun, error) {
 	var run models.ExperimentRun
+	var resultSummary sql.NullString
 	err := e.db.QueryRowContext(ctx, `
 		SELECT id, experiment_id, cluster_id, run_number, status, triggered_by, trigger_type,
 		       started_at, completed_at, duration_ms, result_summary, error_message, cleanup_status, created_at
@@ -964,11 +1062,14 @@ func (e *Engine) findActiveRun(ctx context.Context, experimentID uuid.UUID) (*mo
 	`, experimentID).Scan(
 		&run.ID, &run.ExperimentID, &run.ClusterID, &run.RunNumber, &run.Status,
 		&run.TriggeredBy, &run.TriggerType,
-		&run.StartedAt, &run.CompletedAt, &run.DurationMs, &run.ResultSummary,
+		&run.StartedAt, &run.CompletedAt, &run.DurationMs, &resultSummary,
 		&run.ErrorMessage, &run.CleanupStatus, &run.CreatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if resultSummary.Valid {
+		run.ResultSummary = json.RawMessage(resultSummary.String)
 	}
 	return &run, nil
 }
@@ -988,6 +1089,7 @@ func (e *Engine) getNextRunNumber(ctx context.Context, experimentID uuid.UUID) i
 // loadRun loads a full ExperimentRun from the database by ID.
 func (e *Engine) loadRun(ctx context.Context, runID uuid.UUID) (*models.ExperimentRun, error) {
 	var run models.ExperimentRun
+	var resultSummary sql.NullString
 	err := e.db.QueryRowContext(ctx, `
 		SELECT id, experiment_id, cluster_id, run_number, status, triggered_by, trigger_type,
 		       started_at, completed_at, duration_ms, result_summary, error_message, cleanup_status, created_at
@@ -996,11 +1098,14 @@ func (e *Engine) loadRun(ctx context.Context, runID uuid.UUID) (*models.Experime
 	`, runID).Scan(
 		&run.ID, &run.ExperimentID, &run.ClusterID, &run.RunNumber, &run.Status,
 		&run.TriggeredBy, &run.TriggerType,
-		&run.StartedAt, &run.CompletedAt, &run.DurationMs, &run.ResultSummary,
+		&run.StartedAt, &run.CompletedAt, &run.DurationMs, &resultSummary,
 		&run.ErrorMessage, &run.CleanupStatus, &run.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query experiment run %s: %w", runID, err)
+	}
+	if resultSummary.Valid {
+		run.ResultSummary = json.RawMessage(resultSummary.String)
 	}
 	return &run, nil
 }

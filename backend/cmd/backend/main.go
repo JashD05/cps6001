@@ -351,13 +351,6 @@ func serve(cfg *config.Config, logger *zap.Logger) error {
 		}
 	}
 
-	// Close database connection pool with timeout.
-	if err := db.CloseWithTimeout(10 * time.Second); err != nil {
-		logger.Error("error closing database connection pool", zap.Error(err))
-	} else {
-		logger.Info("database connection pool closed")
-	}
-
 	// Wait briefly for any goroutines to finish.
 	select {
 	case <-shutdownCtx.Done():

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
+	Env        string `json:"env"`
 	Server     ServerConfig
 	Database   DatabaseConfig
 	Redis      RedisConfig
@@ -25,11 +27,12 @@ type Config struct {
 
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
-	Port         string        `json:"port"`
-	ReadTimeout  time.Duration `json:"read_timeout"`
-	WriteTimeout time.Duration `json:"write_timeout"`
-	IdleTimeout  time.Duration `json:"idle_timeout"`
-	Host         string        `json:"host"`
+	Port               string        `json:"port"`
+	ReadTimeout        time.Duration `json:"read_timeout"`
+	WriteTimeout       time.Duration `json:"write_timeout"`
+	IdleTimeout        time.Duration `json:"idle_timeout"`
+	Host               string        `json:"host"`
+	CORSAllowedOrigins string        `json:"cors_allowed_origins"`
 }
 
 // DatabaseConfig holds PostgreSQL connection configuration.
@@ -101,6 +104,21 @@ func (d *DatabaseConfig) DSN() string {
 	)
 }
 
+// MigrateDSN returns the PostgreSQL URL for golang-migrate, properly escaping
+// special characters in the user and password (e.g. @, :, /, ?).
+func (d *DatabaseConfig) MigrateDSN() string {
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(d.User, d.Password),
+		Host:   fmt.Sprintf("%s:%d", d.Host, d.Port),
+		Path:   d.Name,
+	}
+	q := u.Query()
+	q.Set("sslmode", d.SSLMode)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // RedisAddr returns the Redis address string.
 func (r *RedisConfig) RedisAddr() string {
 	return fmt.Sprintf("%s:%d", r.Host, r.Port)
@@ -110,19 +128,21 @@ func (r *RedisConfig) RedisAddr() string {
 // Environment variables are prefixed with CHAOS_ (e.g., CHAOS_SERVER_PORT).
 func Load() (*Config, error) {
 	cfg := &Config{
+		Env: getEnv("CHAOS_ENV", "development"),
 		Server: ServerConfig{
-			Host:         getEnv("CHAOS_SERVER_HOST", "0.0.0.0"),
-			Port:         getEnv("CHAOS_SERVER_PORT", "8080"),
-			ReadTimeout:  getDurationEnv("CHAOS_SERVER_READ_TIMEOUT", 15*time.Second),
-			WriteTimeout: getDurationEnv("CHAOS_SERVER_WRITE_TIMEOUT", 15*time.Second),
-			IdleTimeout:  getDurationEnv("CHAOS_SERVER_IDLE_TIMEOUT", 60*time.Second),
+			Host:               getEnv("CHAOS_SERVER_HOST", "0.0.0.0"),
+			Port:               getEnv("CHAOS_SERVER_PORT", "8080"),
+			ReadTimeout:        getDurationEnv("CHAOS_SERVER_READ_TIMEOUT", 15*time.Second),
+			WriteTimeout:       getDurationEnv("CHAOS_SERVER_WRITE_TIMEOUT", 15*time.Second),
+			IdleTimeout:        getDurationEnv("CHAOS_SERVER_IDLE_TIMEOUT", 60*time.Second),
+			CORSAllowedOrigins: getEnv("CHAOS_CORS_ALLOWED_ORIGINS", ""),
 		},
 		Database: DatabaseConfig{
 			Host:            getEnv("CHAOS_DB_HOST", "localhost"),
 			Port:            getIntEnv("CHAOS_DB_PORT", 5432),
-			Name:            getEnv("CHAOS_DB_NAME", "chaos_sec"),
-			User:            getEnv("CHAOS_DB_USER", "chaos_sec"),
-			Password:        getEnv("CHAOS_DB_PASSWORD", "chaos_sec_dev"),
+			Name:            getEnv("CHAOS_DB_NAME", "chaossec"),
+			User:            getEnv("CHAOS_DB_USER", "chaossec_admin"),
+			Password:        getEnv("CHAOS_DB_PASSWORD", "chaossec_local_dev_password"),
 			SSLMode:         getEnv("CHAOS_DB_SSLMODE", "disable"),
 			MaxOpenConns:    getIntEnv("CHAOS_DB_MAX_OPEN_CONNS", 25),
 			MaxIdleConns:    getIntEnv("CHAOS_DB_MAX_IDLE_CONNS", 5),
@@ -133,7 +153,7 @@ func Load() (*Config, error) {
 		Redis: RedisConfig{
 			Host:     getEnv("CHAOS_REDIS_HOST", "localhost"),
 			Port:     getIntEnv("CHAOS_REDIS_PORT", 6379),
-			Password: getEnv("CHAOS_REDIS_PASSWORD", ""),
+			Password: getEnv("CHAOS_REDIS_PASSWORD", "chaossec_redis_local_password"),
 			DB:       getIntEnv("CHAOS_REDIS_DB", 0),
 		},
 		JWT: JWTConfig{
@@ -175,6 +195,12 @@ func Load() (*Config, error) {
 
 // Validate checks that the configuration is valid and safe for use.
 func (c *Config) Validate() error {
+	// Validate environment setting.
+	validEnvs := map[string]bool{"development": true, "production": true}
+	if !validEnvs[c.Env] {
+		return fmt.Errorf("invalid environment %q: must be \"development\" or \"production\"", c.Env)
+	}
+
 	if c.Server.Port == "" {
 		return fmt.Errorf("server port is required")
 	}
@@ -208,10 +234,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("redis host is required")
 	}
 
-	// In production, JWT secret must be set via environment variable.
-	// We allow empty secret only for development with an explicit warning.
+	// JWT secret validation: production must have it set; development falls back to hardcoded secret with warning.
 	if c.JWT.Secret == "" {
+		if c.IsProduction() {
+			return fmt.Errorf("JWT secret (CHAOS_JWT_SECRET) is required in production")
+		}
 		c.JWT.Secret = "dev-only-insecure-jwt-secret-change-me-in-production"
+		fmt.Fprintf(os.Stderr, "WARNING: Using hardcoded dev JWT secret. Set CHAOS_JWT_SECRET for secure operation.\n")
 	}
 
 	if c.JWT.Expiry < 1*time.Minute {
@@ -271,9 +300,14 @@ func (c *Config) BuildLogger() (*zap.Logger, error) {
 	return logger, nil
 }
 
-// IsDevelopment returns true if the application appears to be running in development mode.
+// IsDevelopment returns true if the application is running in development mode.
 func (c *Config) IsDevelopment() bool {
-	return c.Database.SSLMode == "disable" || c.Logging.Level == "debug"
+	return c.Env == "development"
+}
+
+// IsProduction returns true if the application is running in production mode.
+func (c *Config) IsProduction() bool {
+	return c.Env == "production"
 }
 
 // --- Environment variable helpers ---

@@ -88,7 +88,11 @@ func (p *Processor) Process(ctx context.Context, runID uuid.UUID) error {
 	}
 
 	// Step 3: Execute the experiment via the Engine.
-	result, execErr := p.engine.ExecuteExperiment(ctx, run.ExperimentID, *run.TriggeredBy)
+	triggeredBy := uuid.Nil
+	if run.TriggeredBy != nil {
+		triggeredBy = *run.TriggeredBy
+	}
+	result, execErr := p.engine.ExecuteExperiment(ctx, run.ExperimentID, triggeredBy)
 
 	// Step 4: Handle the result.
 	if execErr != nil {

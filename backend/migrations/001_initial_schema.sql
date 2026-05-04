@@ -204,7 +204,7 @@ CREATE TABLE experiment_runs (
     cleanup_status VARCHAR(30) DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT chk_experiment_runs_status CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+    CONSTRAINT chk_experiment_runs_status CHECK (status IN ('pending', 'queued', 'running', 'completed', 'failed', 'cancelled', 'timed_out')),
     CONSTRAINT chk_experiment_runs_trigger_type CHECK (trigger_type IN ('manual', 'scheduled', 'api', 'webhook')),
     CONSTRAINT chk_experiment_runs_cleanup_status CHECK (cleanup_status IN ('pending', 'completed', 'failed', 'skipped'))
 );

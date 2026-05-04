@@ -10,13 +10,9 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import App from '@/App';
 import { store } from '@/store';
 import lightTheme from '@/theme';
-import { clearTokens } from '@/services/api';
 
 // ---------------------------------------------------------------------------
-// Clear stale auth tokens so no failed API calls happen on startup
-// ---------------------------------------------------------------------------
-clearTokens();
-
+// Keep stored auth tokens so users stay signed in across page refreshes.
 // ---------------------------------------------------------------------------
 // Global error handler for unhandled promise rejections
 // ---------------------------------------------------------------------------

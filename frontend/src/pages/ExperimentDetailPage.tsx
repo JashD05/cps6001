@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -10,8 +10,6 @@ import {
   Stack,
   Divider,
   Tooltip,
-  Card,
-  CardContent,
   LinearProgress,
   Table,
   TableBody,
@@ -28,7 +26,6 @@ import {
   Collapse,
   Fade,
   Skeleton,
-  Avatar,
   List,
   ListItem,
   ListItemIcon,
@@ -38,9 +35,7 @@ import {
 } from '@mui/material';
 import {
   PlayArrow as RunIcon,
-  Stop as StopIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon,
   Refresh as RefreshIcon,
   ArrowBack as BackIcon,
   Science as ExperimentIcon,
@@ -54,47 +49,35 @@ import {
   RadioButtonChecked as RunningIcon,
   SkipNext as SkipIcon,
   Description as LogIcon,
-  Widgets as PodIcon,
   Assessment as ResultsIcon,
   Security as SIEMIcon,
-  TrendingUp as TrendUpIcon,
-  TrendingDown as TrendDownIcon,
-  CloudDownload as DownloadIcon,
   ContentCopy as CopyIcon,
   NavigateNext as NavigateNextIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   Circle as CircleIcon,
-  KeyboardArrowRight as ChevronRightIcon,
   DeleteOutline as TrashIcon,
   Replay as ReplayIcon,
 } from '@mui/icons-material';
 import { useDispatch, useSelector } from 'react-redux';
-import type { AppDispatch, RootState } from '@/store';
+import type { AppDispatch } from '@/store';
 import {
   fetchExperimentById,
   fetchExperimentLogs,
   executeExperiment,
-  stopExperiment,
   clearExperimentDetail,
   selectExperimentDetail,
   selectExperimentDetailLoading,
   selectExperimentDetailError,
-  selectCurrentRun,
   selectExperimentLogs,
   selectExecuteStatus,
-  selectStopStatus,
+  selectExecuteError,
   resetExecuteStatus,
-  resetStopStatus,
-  updateExperimentStatus,
 } from '@/store/experimentSlice';
-import { experimentsAPI, getErrorMessage } from '@/services/api';
 import StatusBadge from '@/components/StatusBadge';
 import type {
   Experiment,
   ExperimentStep,
-  ExperimentRun,
-  PodStatus,
   SIEMValidationResult,
   ExperimentResult,
 } from '@/types';
@@ -105,25 +88,24 @@ import type {
 
 const formatDate = (dateStr: string | undefined | null): string => {
   if (!dateStr) return '—';
-  return new Date(dateStr).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  const d = new Date(dateStr);
+  const month = d.toLocaleString('default', { month: 'short' });
+  const day = d.getDate();
+  const hour = d.getHours().toString().padStart(2, '0');
+  const minute = d.getMinutes().toString().padStart(2, '0');
+  const second = d.getSeconds().toString().padStart(2, '0');
+  return `${month} ${day}, ${d.getFullYear()} ${hour}:${minute}:${second}`;
 };
 
-const formatDuration = (ms: number | undefined | null): string => {
-  if (ms === undefined || ms === null) return '—';
+const formatDuration = (ms: number): string => {
   const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
-  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
-  return `${hours}h ${remainingMinutes}m`;
+  if (hours > 0) return `${hours}h ${remainingMinutes}m ${remainingSeconds}s`;
+  if (minutes > 0) return `${minutes}m ${remainingSeconds}s`;
+  return `${seconds}s`;
 };
 
 const getStepIcon = (status: ExperimentStep['status']): React.ReactElement => {
@@ -136,26 +118,8 @@ const getStepIcon = (status: ExperimentStep['status']): React.ReactElement => {
       return <ErrorIcon sx={{ fontSize: 20, color: 'error.main' }} />;
     case 'skipped':
       return <SkipIcon sx={{ fontSize: 20, color: 'text.disabled' }} />;
-    case 'pending':
     default:
       return <PendingIcon sx={{ fontSize: 20, color: 'text.secondary' }} />;
-  }
-};
-
-const getPodStatusColor = (
-  status: PodStatus['status'],
-): 'success' | 'error' | 'warning' | 'default' | 'primary' => {
-  switch (status) {
-    case 'Running':
-      return 'primary';
-    case 'Succeeded':
-      return 'success';
-    case 'Failed':
-      return 'error';
-    case 'Pending':
-      return 'warning';
-    default:
-      return 'default';
   }
 };
 
@@ -277,7 +241,7 @@ const ProgressTracker: React.FC<ProgressTrackerProps> = ({ steps }) => {
   );
 };
 
-/** Live Log Viewer */
+/** Static read-only Log Viewer */
 interface LogViewerProps {
   logs: string[];
   isLoading: boolean;
@@ -292,28 +256,12 @@ const LogViewer: React.FC<LogViewerProps> = ({
   experimentId,
 }) => {
   const [expanded, setExpanded] = useState(true);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const logEndRef = useRef<HTMLDivElement>(null);
-  const logContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (autoScroll && logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [logs, autoScroll]);
-
-  const handleScroll = useCallback(() => {
-    if (!logContainerRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = logContainerRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-    setAutoScroll(isAtBottom);
-  }, []);
-
-  const handleCopyLogs = useCallback(() => {
+  const handleCopyLogs = () => {
     navigator.clipboard.writeText(logs.join('\n')).catch(() => {
       /* clipboard API might not be available */
     });
-  }, [logs]);
+  };
 
   return (
     <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
@@ -331,7 +279,7 @@ const LogViewer: React.FC<LogViewerProps> = ({
         <Stack direction="row" alignItems="center" spacing={1}>
           <LogIcon sx={{ fontSize: 18, color: 'primary.main' }} />
           <Typography variant="subtitle2" fontWeight={700}>
-            Live Logs
+            Run Logs
           </Typography>
           {logs.length > 0 && (
             <Chip
@@ -371,8 +319,6 @@ const LogViewer: React.FC<LogViewerProps> = ({
 
       <Collapse in={expanded}>
         <Box
-          ref={logContainerRef}
-          onScroll={handleScroll}
           sx={{
             backgroundColor: '#0F172A',
             color: '#E2E8F0',
@@ -407,7 +353,7 @@ const LogViewer: React.FC<LogViewerProps> = ({
                 }}
               >
                 No logs available yet.{' '}
-                {experimentId ? 'Start the experiment to see logs.' : ''}
+                {experimentId ? 'Run the experiment to see logs.' : ''}
               </Typography>
             </Box>
           ) : (
@@ -447,192 +393,13 @@ const LogViewer: React.FC<LogViewerProps> = ({
               </Box>
             ))
           )}
-          <div ref={logEndRef} />
         </Box>
-        {logs.length > 0 && !autoScroll && (
-          <Box
-            sx={{
-              display: 'flex',
-              justifyContent: 'center',
-              py: 0.75,
-              borderTop: '1px solid',
-              borderColor: 'divider',
-            }}
-          >
-            <Button
-              size="small"
-              startIcon={<ChevronRightIcon sx={{ transform: 'rotate(90deg)' }} />}
-              onClick={() => {
-                setAutoScroll(true);
-                logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              sx={{ textTransform: 'none', fontSize: '0.75rem' }}
-            >
-              Scroll to bottom
-            </Button>
-          </Box>
-        )}
       </Collapse>
     </Paper>
   );
 };
 
-/** Attack Pod Status Section */
-interface PodStatusSectionProps {
-  pods: PodStatus[];
-  isLoading: boolean;
-}
-
-const PodStatusSection: React.FC<PodStatusSectionProps> = ({ pods, isLoading }) => {
-  if (isLoading) {
-    return (
-      <Paper variant="outlined" sx={{ borderRadius: 2, p: 2.5 }}>
-        <Stack spacing={1}>
-          {[1, 2, 3].map((i) => (
-            <Skeleton
-              key={i}
-              variant="rectangular"
-              height={40}
-              sx={{ borderRadius: 1 }}
-            />
-          ))}
-        </Stack>
-      </Paper>
-    );
-  }
-
-  return (
-    <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
-      <Box sx={{ px: 2.5, py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <PodIcon sx={{ fontSize: 18, color: 'primary.main' }} />
-          <Typography variant="subtitle2" fontWeight={700}>
-            Attack Pod Status
-          </Typography>
-          {pods.length > 0 && (
-            <Chip
-              label={`${pods.length} pod${pods.length !== 1 ? 's' : ''}`}
-              size="small"
-              sx={{ ml: 'auto', height: 22, fontSize: '0.6875rem' }}
-            />
-          )}
-        </Stack>
-      </Box>
-
-      {pods.length === 0 ? (
-        <Box sx={{ py: 4, textAlign: 'center' }}>
-          <PodIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
-          <Typography variant="body2" color="text.secondary">
-            No attack pods deployed yet.
-          </Typography>
-          <Typography
-            variant="caption"
-            color="text.disabled"
-            sx={{ display: 'block', mt: 0.5 }}
-          >
-            Pods will appear once the experiment starts running.
-          </Typography>
-        </Box>
-      ) : (
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Namespace</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Ready</TableCell>
-                <TableCell>Restarts</TableCell>
-                <TableCell>Age</TableCell>
-                <TableCell>Node</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {pods.map((pod) => (
-                <TableRow key={pod.name}>
-                  <TableCell>
-                    <Typography
-                      variant="body2"
-                      fontWeight={500}
-                      sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
-                    >
-                      {pod.name}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
-                    >
-                      {pod.namespace}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge
-                      status={
-                        pod.status === 'Running'
-                          ? 'running'
-                          : pod.status === 'Succeeded'
-                            ? 'completed'
-                            : pod.status === 'Failed'
-                              ? 'failed'
-                              : 'pending'
-                      }
-                      variant="pill"
-                      size="small"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {pod.ready ? (
-                        <CheckCircleIcon
-                          sx={{
-                            fontSize: 16,
-                            color: 'success.main',
-                            verticalAlign: 'middle',
-                          }}
-                        />
-                      ) : (
-                        <ErrorIcon
-                          sx={{
-                            fontSize: 16,
-                            color: 'warning.main',
-                            verticalAlign: 'middle',
-                          }}
-                        />
-                      )}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        color: pod.restarts > 0 ? 'warning.main' : 'text.secondary',
-                        fontWeight: pod.restarts > 0 ? 600 : 400,
-                      }}
-                    >
-                      {pod.restarts}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">{pod.age}</Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
-                      {pod.node ?? '—'}
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
-    </Paper>
-  );
-};
-
-/** Results Summary Section (shown when experiment is completed) */
+/** Results Summary – outcome banner with score, pass/fail, summary, and details */
 interface ResultsSummaryProps {
   result: ExperimentResult;
 }
@@ -1013,13 +780,12 @@ const ExperimentDetailPage: React.FC = () => {
   const experiment = useSelector(selectExperimentDetail);
   const isLoading = useSelector(selectExperimentDetailLoading);
   const error = useSelector(selectExperimentDetailError);
-  const currentRun = useSelector(selectCurrentRun);
   const logs = useSelector(selectExperimentLogs);
   const executeStatus = useSelector(selectExecuteStatus);
-  const stopStatus = useSelector(selectStopStatus);
+  const executeError = useSelector(selectExecuteError);
+  const isNotFound = Boolean(error && /not found|404/i.test(error));
 
   const [activeTab, setActiveTab] = useState(0);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Data Fetching
@@ -1035,22 +801,11 @@ const ExperimentDetailPage: React.FC = () => {
     };
   }, [dispatch, id]);
 
-  // Refresh logs periodically when experiment is running
+  // Reset execute status on mount so stale errors don't persist
   useEffect(() => {
-    if (!id || experiment?.status !== 'running') return;
-
-    const interval = setInterval(() => {
-      dispatch(fetchExperimentLogs({ id, tail: 200 }));
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [dispatch, id, experiment?.status]);
-
-  // Reset action statuses on unmount
-  useEffect(() => {
+    dispatch(resetExecuteStatus());
     return () => {
       dispatch(resetExecuteStatus());
-      dispatch(resetStopStatus());
     };
   }, [dispatch]);
 
@@ -1061,15 +816,14 @@ const ExperimentDetailPage: React.FC = () => {
   const handleRun = async () => {
     if (!id) return;
     dispatch(resetExecuteStatus());
-    await dispatch(executeExperiment(id));
-    dispatch(fetchExperimentById(id));
-  };
-
-  const handleStop = async () => {
-    if (!id) return;
-    dispatch(resetStopStatus());
-    await dispatch(stopExperiment(id));
-    dispatch(fetchExperimentById(id));
+    const result = await dispatch(
+      executeExperiment({ id, clusterId: experiment?.clusterId }),
+    );
+    if (executeExperiment.fulfilled.match(result)) {
+      // Refresh the experiment from the backend so we get the real run state
+      dispatch(fetchExperimentById(id));
+      dispatch(fetchExperimentLogs({ id, tail: 200 }));
+    }
   };
 
   const handleRefresh = () => {
@@ -1108,14 +862,16 @@ const ExperimentDetailPage: React.FC = () => {
       <Box sx={{ py: 4, textAlign: 'center' }}>
         <ErrorIcon sx={{ fontSize: 64, color: 'error.main', mb: 2 }} />
         <Typography variant="h5" fontWeight={700} gutterBottom>
-          Failed to Load Experiment
+          {isNotFound ? 'Experiment Not Found' : 'Failed to Load Experiment'}
         </Typography>
         <Typography
           variant="body1"
           color="text.secondary"
           sx={{ mb: 3, maxWidth: 480, mx: 'auto' }}
         >
-          {error}
+          {isNotFound
+            ? 'The experiment you requested does not exist or was removed. Go back to the list and open a different experiment.'
+            : error}
         </Typography>
         <Stack direction="row" spacing={2} justifyContent="center">
           <Button
@@ -1142,19 +898,18 @@ const ExperimentDetailPage: React.FC = () => {
   // ---------------------------------------------------------------------------
 
   const canRun =
+    experiment.status === 'draft' ||
+    experiment.status === 'active' ||
     experiment.status === 'pending' ||
     experiment.status === 'completed' ||
     experiment.status === 'failed' ||
     experiment.status === 'stopped' ||
-    experiment.status === 'timed_out';
+    experiment.status === 'timed_out' ||
+    experiment.status === 'archived';
 
-  const canStop = experiment.status === 'running' || experiment.status === 'queued';
-
-  const isRunning = experiment.status === 'running';
   const isCompleted = experiment.status === 'completed';
   const isFailed = experiment.status === 'failed';
-
-  const pods: PodStatus[] = currentRun?.podStatuses ?? [];
+  const hasCompletedRun = isCompleted || isFailed;
   const hasResult = experiment.result !== undefined && experiment.result !== null;
   const hasSIEMValidation = hasResult && experiment.result!.siemValidation !== undefined;
 
@@ -1193,11 +948,9 @@ const ExperimentDetailPage: React.FC = () => {
           borderLeft: '4px solid',
           borderLeftColor: isFailed
             ? 'error.main'
-            : isRunning
-              ? 'primary.main'
-              : isCompleted
-                ? 'success.main'
-                : 'divider',
+            : isCompleted
+              ? 'success.main'
+              : 'divider',
         }}
       >
         <Box sx={{ p: 2.5 }}>
@@ -1227,7 +980,7 @@ const ExperimentDetailPage: React.FC = () => {
                   status={experiment.status}
                   variant="pill"
                   size="medium"
-                  animated={isRunning}
+                  label={experiment.status === 'pending' ? 'Draft' : undefined}
                 />
               </Stack>
 
@@ -1308,25 +1061,16 @@ const ExperimentDetailPage: React.FC = () => {
                 <Button
                   variant="contained"
                   color="primary"
-                  startIcon={<RunIcon />}
+                  startIcon={hasResult ? <ReplayIcon /> : <RunIcon />}
                   onClick={handleRun}
                   disabled={executeStatus === 'loading'}
                   sx={{ minWidth: 100 }}
                 >
-                  {executeStatus === 'loading' ? 'Starting...' : 'Run'}
-                </Button>
-              )}
-
-              {canStop && (
-                <Button
-                  variant="contained"
-                  color="error"
-                  startIcon={<StopIcon />}
-                  onClick={handleStop}
-                  disabled={stopStatus === 'loading'}
-                  sx={{ minWidth: 100 }}
-                >
-                  {stopStatus === 'loading' ? 'Stopping...' : 'Stop'}
+                  {executeStatus === 'loading'
+                    ? 'Starting...'
+                    : hasResult
+                      ? 'Re-run'
+                      : 'Run'}
                 </Button>
               )}
 
@@ -1343,48 +1087,23 @@ const ExperimentDetailPage: React.FC = () => {
               </Tooltip>
             </Stack>
           </Stack>
-
-          {/* Progress bar for running experiments */}
-          {isRunning && (
-            <Box sx={{ mt: 2 }}>
-              <Stack direction="row" justifyContent="space-between" mb={0.5}>
-                <Typography variant="caption" color="text.secondary">
-                  Progress
-                </Typography>
-                <Typography variant="caption" fontWeight={600} color="primary">
-                  {experiment.progress}%
-                </Typography>
-              </Stack>
-              <LinearProgress
-                variant="determinate"
-                value={experiment.progress}
-                sx={{
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: theme.palette.divider,
-                  '& .MuiLinearProgress-bar': {
-                    borderRadius: 4,
-                  },
-                }}
-              />
-            </Box>
-          )}
         </Box>
       </Paper>
 
       {/* ----------------------------------------------------------------- */}
-      {/* Quick Status Alerts                                               */}
+      {/* Alerts                                                            */}
       {/* ----------------------------------------------------------------- */}
 
       {executeStatus === 'succeeded' && (
         <Fade in>
           <Alert
-            severity="success"
+            severity="info"
             sx={{ mb: 2, borderRadius: 2 }}
             onClose={() => dispatch(resetExecuteStatus())}
           >
-            <AlertTitle>Experiment Started</AlertTitle>
-            The experiment is now running. You can monitor progress below.
+            <AlertTitle>Experiment Queued</AlertTitle>
+            The experiment has been queued for execution. Come back and refresh this page
+            to see results once it completes.
           </Alert>
         </Fade>
       )}
@@ -1392,229 +1111,257 @@ const ExperimentDetailPage: React.FC = () => {
       {executeStatus === 'failed' && (
         <Fade in>
           <Alert
-            severity="error"
+            severity={executeError?.includes('concurrency_limit') ? 'warning' : 'error'}
             sx={{ mb: 2, borderRadius: 2 }}
             onClose={() => dispatch(resetExecuteStatus())}
           >
-            <AlertTitle>Failed to Start</AlertTitle>
-            The experiment could not be started. Please check the configuration and try
-            again.
-          </Alert>
-        </Fade>
-      )}
-
-      {stopStatus === 'succeeded' && (
-        <Fade in>
-          <Alert
-            severity="warning"
-            sx={{ mb: 2, borderRadius: 2 }}
-            onClose={() => dispatch(resetStopStatus())}
-          >
-            <AlertTitle>Experiment Stopped</AlertTitle>
-            The experiment has been stopped successfully.
+            <AlertTitle>
+              {executeError?.includes('concurrency_limit')
+                ? 'Concurrency Limit Reached'
+                : 'Failed to Start'}
+            </AlertTitle>
+            {executeError?.includes('concurrency_limit') ? (
+              <>
+                {executeError}
+                <br />
+                <strong>Tip:</strong> Wait for running experiments to complete, or ask
+                your administrator to increase the <code>CHAOS_K8S_MAX_CONCURRENT</code>{' '}
+                limit.
+              </>
+            ) : (
+              executeError ||
+              'The experiment could not be started. Please check the configuration and try again.'
+            )}
           </Alert>
         </Fade>
       )}
 
       {/* ----------------------------------------------------------------- */}
-      {/* Tab Navigation                                                    */}
+      {/* Tab Navigation — only shown when a run has completed              */}
       {/* ----------------------------------------------------------------- */}
 
-      <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}>
-          <Tabs
-            value={activeTab}
-            onChange={(_, newValue) => setActiveTab(newValue)}
-            variant={isMobile ? 'scrollable' : 'standard'}
-            scrollButtons="auto"
+      {!hasCompletedRun ? (
+        /* "No results yet" empty state — clear card with a single Run button */
+        <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+          <Box
+            sx={{
+              py: 8,
+              px: 3,
+              textAlign: 'center',
+            }}
           >
-            <Tab
-              label="Overview"
-              icon={<ExperimentIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              sx={{ minHeight: 48, textTransform: 'none', fontWeight: 600 }}
+            <ExperimentIcon
+              sx={{
+                fontSize: 56,
+                color: 'text.disabled',
+                mb: 2,
+                display: 'block',
+                mx: 'auto',
+              }}
             />
-            <Tab
-              label="Logs"
-              icon={<LogIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              sx={{ minHeight: 48, textTransform: 'none', fontWeight: 600 }}
-            />
-            <Tab
-              label="Pods"
-              icon={<PodIcon sx={{ fontSize: 18 }} />}
-              iconPosition="start"
-              sx={{ minHeight: 48, textTransform: 'none', fontWeight: 600 }}
-            />
-            {(isCompleted || isFailed) && (
+            <Typography variant="h6" fontWeight={600} gutterBottom>
+              No results yet
+            </Typography>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ mb: 3, maxWidth: 400, mx: 'auto' }}
+            >
+              This experiment hasn't been run yet. Click the button below to execute it
+              and see the results here once it completes.
+            </Typography>
+            {canRun && (
+              <Button
+                variant="contained"
+                color="primary"
+                size="large"
+                startIcon={<RunIcon />}
+                onClick={handleRun}
+                disabled={executeStatus === 'loading'}
+                sx={{ minWidth: 140 }}
+              >
+                {executeStatus === 'loading' ? 'Starting...' : 'Run'}
+              </Button>
+            )}
+          </Box>
+        </Paper>
+      ) : (
+        <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+          <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}>
+            <Tabs
+              value={activeTab}
+              onChange={(_, newValue) => setActiveTab(newValue)}
+              variant={isMobile ? 'scrollable' : 'standard'}
+              scrollButtons="auto"
+            >
               <Tab
                 label="Results"
                 icon={<ResultsIcon sx={{ fontSize: 18 }} />}
                 iconPosition="start"
                 sx={{ minHeight: 48, textTransform: 'none', fontWeight: 600 }}
               />
-            )}
-            {hasSIEMValidation && (
               <Tab
-                label="SIEM Validation"
-                icon={<SIEMIcon sx={{ fontSize: 18 }} />}
+                label="Overview"
+                icon={<ExperimentIcon sx={{ fontSize: 18 }} />}
                 iconPosition="start"
                 sx={{ minHeight: 48, textTransform: 'none', fontWeight: 600 }}
               />
-            )}
-          </Tabs>
-        </Box>
+              <Tab
+                label="Logs"
+                icon={<LogIcon sx={{ fontSize: 18 }} />}
+                iconPosition="start"
+                sx={{ minHeight: 48, textTransform: 'none', fontWeight: 600 }}
+              />
+              {hasSIEMValidation && (
+                <Tab
+                  label="SIEM Validation"
+                  icon={<SIEMIcon sx={{ fontSize: 18 }} />}
+                  iconPosition="start"
+                  sx={{ minHeight: 48, textTransform: 'none', fontWeight: 600 }}
+                />
+              )}
+            </Tabs>
+          </Box>
 
-        <Box sx={{ p: 2.5 }}>
-          {/* Tab 0: Overview (Progress Tracker) */}
-          <TabPanel value={activeTab} index={0}>
-            <ProgressTracker steps={experiment.steps} />
+          <Box sx={{ p: 2.5 }}>
+            {/* Tab 0: Results (first tab — the outcome banner) */}
+            <TabPanel value={activeTab} index={0}>
+              {hasResult ? (
+                <ResultsSummary result={experiment.result!} />
+              ) : (
+                <Box sx={{ py: 6, textAlign: 'center' }}>
+                  <ResultsIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
+                  <Typography variant="body1" color="text.secondary">
+                    No results available yet.
+                  </Typography>
+                  <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>
+                    Results will be shown once the experiment completes.
+                  </Typography>
+                </Box>
+              )}
+            </TabPanel>
 
-            {/* Quick info cards */}
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mt: 3 }}>
-              {/* Namespace */}
-              <Box
-                sx={{
-                  flex: 1,
-                  p: 2,
-                  borderRadius: 2,
-                  border: '1px solid',
-                  borderColor: 'divider',
-                }}
-              >
-                <Typography variant="overline" sx={{ mb: 0.5, display: 'block' }}>
-                  Namespace
-                </Typography>
-                <Typography
-                  variant="body1"
-                  fontWeight={600}
-                  sx={{ fontFamily: 'monospace' }}
+            {/* Tab 1: Overview (Progress Tracker + metadata) */}
+            <TabPanel value={activeTab} index={1}>
+              <ProgressTracker steps={experiment.steps} />
+
+              {/* Quick info cards */}
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mt: 3 }}>
+                {/* Namespace */}
+                <Box
+                  sx={{
+                    flex: 1,
+                    p: 2,
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                  }}
                 >
-                  {experiment.namespace}
-                </Typography>
-              </Box>
+                  <Typography variant="overline" sx={{ mb: 0.5, display: 'block' }}>
+                    Namespace
+                  </Typography>
+                  <Typography
+                    variant="body1"
+                    fontWeight={600}
+                    sx={{ fontFamily: 'monospace' }}
+                  >
+                    {experiment.namespace}
+                  </Typography>
+                </Box>
 
-              {/* Tags */}
-              <Box
-                sx={{
-                  flex: 2,
-                  p: 2,
-                  borderRadius: 2,
-                  border: '1px solid',
-                  borderColor: 'divider',
-                }}
-              >
-                <Typography variant="overline" sx={{ mb: 0.5, display: 'block' }}>
-                  Tags
-                </Typography>
-                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                  {experiment.tags.length > 0 ? (
-                    experiment.tags.map((tag) => (
-                      <Chip
-                        key={tag}
-                        label={tag}
-                        size="small"
-                        variant="outlined"
-                        sx={{ fontSize: '0.75rem' }}
-                      />
-                    ))
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">
-                      No tags
-                    </Typography>
-                  )}
-                </Stack>
-              </Box>
-
-              {/* Parameters */}
-              <Box
-                sx={{
-                  flex: 2,
-                  p: 2,
-                  borderRadius: 2,
-                  border: '1px solid',
-                  borderColor: 'divider',
-                }}
-              >
-                <Typography variant="overline" sx={{ mb: 0.5, display: 'block' }}>
-                  Parameters
-                </Typography>
-                <Stack spacing={0.5}>
-                  {Object.entries(experiment.parameters).map(([key, value]) => (
-                    <Stack key={key} direction="row" spacing={1}>
-                      <Typography
-                        variant="caption"
-                        fontWeight={600}
-                        sx={{ fontFamily: 'monospace', minWidth: 120 }}
-                      >
-                        {key}:
+                {/* Tags */}
+                <Box
+                  sx={{
+                    flex: 2,
+                    p: 2,
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Typography variant="overline" sx={{ mb: 0.5, display: 'block' }}>
+                    Tags
+                  </Typography>
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                    {experiment.tags.length > 0 ? (
+                      experiment.tags.map((tag) => (
+                        <Chip
+                          key={tag}
+                          label={tag}
+                          size="small"
+                          variant="outlined"
+                          sx={{ fontSize: '0.75rem' }}
+                        />
+                      ))
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No tags
                       </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ fontFamily: 'monospace' }}
-                      >
-                        {JSON.stringify(value)}
+                    )}
+                  </Stack>
+                </Box>
+
+                {/* Parameters */}
+                <Box
+                  sx={{
+                    flex: 2,
+                    p: 2,
+                    borderRadius: 2,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Typography variant="overline" sx={{ mb: 0.5, display: 'block' }}>
+                    Parameters
+                  </Typography>
+                  <Stack spacing={0.5}>
+                    {Object.entries(experiment.parameters).map(([key, value]) => (
+                      <Stack key={key} direction="row" spacing={1}>
+                        <Typography
+                          variant="caption"
+                          fontWeight={600}
+                          sx={{ fontFamily: 'monospace', minWidth: 120 }}
+                        >
+                          {key}:
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontFamily: 'monospace' }}
+                        >
+                          {JSON.stringify(value)}
+                        </Typography>
+                      </Stack>
+                    ))}
+                    {Object.keys(experiment.parameters).length === 0 && (
+                      <Typography variant="body2" color="text.secondary">
+                        No parameters
                       </Typography>
-                    </Stack>
-                  ))}
-                  {Object.keys(experiment.parameters).length === 0 && (
-                    <Typography variant="body2" color="text.secondary">
-                      No parameters
-                    </Typography>
-                  )}
-                </Stack>
-              </Box>
-            </Stack>
-          </TabPanel>
+                    )}
+                  </Stack>
+                </Box>
+              </Stack>
+            </TabPanel>
 
-          {/* Tab 1: Logs */}
-          <TabPanel value={activeTab} index={1}>
-            <LogViewer
-              logs={logs}
-              isLoading={isLoading}
-              onRefresh={handleRefreshLogs}
-              experimentId={id ?? ''}
-            />
-          </TabPanel>
+            {/* Tab 2: Logs */}
+            <TabPanel value={activeTab} index={2}>
+              <LogViewer
+                logs={logs}
+                isLoading={isLoading}
+                onRefresh={handleRefreshLogs}
+                experimentId={id ?? ''}
+              />
+            </TabPanel>
 
-          {/* Tab 2: Pods */}
-          <TabPanel value={activeTab} index={2}>
-            <PodStatusSection pods={pods} isLoading={isLoading} />
-          </TabPanel>
-
-          {/* Tab 3: Results (only when completed or failed) */}
-          <TabPanel value={activeTab} index={3}>
-            {hasResult ? (
-              <ResultsSummary result={experiment.result!} />
-            ) : (
-              <Box sx={{ py: 6, textAlign: 'center' }}>
-                <ResultsIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-                <Typography variant="body1" color="text.secondary">
-                  No results available yet.
-                </Typography>
-                <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>
-                  Results will be shown once the experiment completes.
-                </Typography>
-              </Box>
+            {/* Tab 3: SIEM Validation (only when data exists) */}
+            {hasSIEMValidation && (
+              <TabPanel value={activeTab} index={3}>
+                <SIEMValidationSection validation={experiment.result!.siemValidation} />
+              </TabPanel>
             )}
-          </TabPanel>
-
-          {/* Tab 4: SIEM Validation (only when available) */}
-          <TabPanel value={activeTab} index={4}>
-            {hasSIEMValidation ? (
-              <SIEMValidationSection validation={experiment.result!.siemValidation} />
-            ) : (
-              <Box sx={{ py: 6, textAlign: 'center' }}>
-                <SIEMIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-                <Typography variant="body1" color="text.secondary">
-                  No SIEM validation data available.
-                </Typography>
-              </Box>
-            )}
-          </TabPanel>
-        </Box>
-      </Paper>
+          </Box>
+        </Paper>
+      )}
     </Box>
   );
 };

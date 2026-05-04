@@ -558,6 +558,8 @@ func (m *ClientManager) CloseAll() {
 		return true
 	})
 
+	m.defaultClient = nil
+
 	m.logger.Info("all cluster clients closed and removed from cache")
 }
 

@@ -138,12 +138,14 @@ func (s *Scheduler) ScheduleExperiment(
 	if ttl < 5*time.Minute {
 		ttl = 5 * time.Minute
 	}
-	if err := s.rdb.Set(ctx, scheduleKey, scheduleData, ttl).Err(); err != nil {
-		s.logger.Error("failed to persist schedule in Redis",
-			zap.String("experiment_id", experimentID.String()),
-			zap.Error(err),
-		)
-		// Continue — the DB is the source of truth.
+	if s.rdb != nil {
+		if err := s.rdb.Set(ctx, scheduleKey, scheduleData, ttl).Err(); err != nil {
+			s.logger.Error("failed to persist schedule in Redis",
+				zap.String("experiment_id", experimentID.String()),
+				zap.Error(err),
+			)
+			// Continue — the DB is the source of truth.
+		}
 	}
 
 	s.logger.Info("experiment scheduled for future execution",
@@ -205,11 +207,13 @@ func (s *Scheduler) ScheduleRecurringExperiment(
 		IsRecurring:    true,
 	})
 
-	if err := s.rdb.Set(ctx, scheduleKey, scheduleData, 7*24*time.Hour).Err(); err != nil {
-		s.logger.Error("failed to persist recurring schedule in Redis",
-			zap.String("experiment_id", experimentID.String()),
-			zap.Error(err),
-		)
+	if s.rdb != nil {
+		if err := s.rdb.Set(ctx, scheduleKey, scheduleData, 7*24*time.Hour).Err(); err != nil {
+			s.logger.Error("failed to persist recurring schedule in Redis",
+				zap.String("experiment_id", experimentID.String()),
+				zap.Error(err),
+			)
+		}
 	}
 
 	// Register the cron job if the scheduler is already running.
@@ -243,7 +247,7 @@ func (s *Scheduler) Start() {
 	s.started = true
 
 	// Start the cron runner.
-	s.cronRunner = cron.New(cron.WithSeconds())
+	s.cronRunner = cron.New()
 	s.cronRunner.Start()
 
 	// Load any existing recurring schedules from the DB.
@@ -291,40 +295,43 @@ func (s *Scheduler) Stop() {
 // GetPendingSchedules returns a list of upcoming scheduled experiments
 // from both Redis and the database.
 func (s *Scheduler) GetPendingSchedules(ctx context.Context) ([]ScheduledExperiment, error) {
-	// First, try to get schedules from Redis (faster).
-	pattern := "experiment:schedule:*"
-	keys, err := s.rdb.Keys(ctx, pattern).Result()
-	if err != nil {
-		s.logger.Warn("failed to list schedule keys from Redis, falling back to DB",
-			zap.Error(err),
-		)
-		return s.getPendingSchedulesFromDB(ctx)
-	}
-
 	var schedules []ScheduledExperiment
-	for _, key := range keys {
-		data, err := s.rdb.Get(ctx, key).Bytes()
+
+	// First, try to get schedules from Redis (faster).
+	if s.rdb != nil {
+		pattern := "experiment:schedule:*"
+		keys, err := s.rdb.Keys(ctx, pattern).Result()
 		if err != nil {
-			if err == redis.Nil {
+			s.logger.Warn("failed to list schedule keys from Redis, falling back to DB",
+				zap.Error(err),
+			)
+			return s.getPendingSchedulesFromDB(ctx)
+		}
+
+		for _, key := range keys {
+			data, err := s.rdb.Get(ctx, key).Bytes()
+			if err != nil {
+				if err == redis.Nil {
+					continue
+				}
+				s.logger.Warn("failed to read schedule from Redis",
+					zap.String("key", key),
+					zap.Error(err),
+				)
 				continue
 			}
-			s.logger.Warn("failed to read schedule from Redis",
-				zap.String("key", key),
-				zap.Error(err),
-			)
-			continue
-		}
 
-		var se ScheduledExperiment
-		if err := json.Unmarshal(data, &se); err != nil {
-			s.logger.Warn("failed to unmarshal schedule data",
-				zap.String("key", key),
-				zap.Error(err),
-			)
-			continue
-		}
+			var se ScheduledExperiment
+			if err := json.Unmarshal(data, &se); err != nil {
+				s.logger.Warn("failed to unmarshal schedule data",
+					zap.String("key", key),
+					zap.Error(err),
+				)
+				continue
+			}
 
-		schedules = append(schedules, se)
+			schedules = append(schedules, se)
+		}
 	}
 
 	// Also check the DB for any schedules with cron expressions that
@@ -344,11 +351,13 @@ func (s *Scheduler) GetPendingSchedules(ctx context.Context) ([]ScheduledExperim
 func (s *Scheduler) CancelSchedule(ctx context.Context, experimentID uuid.UUID) error {
 	// Remove from Redis.
 	scheduleKey := fmt.Sprintf("experiment:schedule:%s", experimentID.String())
-	if err := s.rdb.Del(ctx, scheduleKey).Err(); err != nil {
-		s.logger.Warn("failed to remove schedule from Redis",
-			zap.String("experiment_id", experimentID.String()),
-			zap.Error(err),
-		)
+	if s.rdb != nil {
+		if err := s.rdb.Del(ctx, scheduleKey).Err(); err != nil {
+			s.logger.Warn("failed to remove schedule from Redis",
+				zap.String("experiment_id", experimentID.String()),
+				zap.Error(err),
+			)
+		}
 	}
 
 	// Clear the cron expression in the DB.
@@ -451,8 +460,10 @@ func (s *Scheduler) pollOnce() {
 				s.rescheduleRecurring(ctx, se)
 			} else {
 				// Remove the one-time schedule from Redis.
-				scheduleKey := fmt.Sprintf("experiment:schedule:%s", se.ExperimentID.String())
-				_ = s.rdb.Del(ctx, scheduleKey).Err()
+				if s.rdb != nil {
+					scheduleKey := fmt.Sprintf("experiment:schedule:%s", se.ExperimentID.String())
+					_ = s.rdb.Del(ctx, scheduleKey).Err()
+				}
 			}
 		}(se)
 
@@ -714,11 +725,13 @@ func (s *Scheduler) rescheduleRecurring(ctx context.Context, se ScheduledExperim
 
 	scheduleKey := fmt.Sprintf("experiment:schedule:%s", se.ExperimentID.String())
 	data, _ := json.Marshal(updated)
-	if err := s.rdb.Set(ctx, scheduleKey, data, 7*24*time.Hour).Err(); err != nil {
-		s.logger.Error("failed to reschedule recurring experiment in Redis",
-			zap.String("experiment_id", se.ExperimentID.String()),
-			zap.Error(err),
-		)
+	if s.rdb != nil {
+		if err := s.rdb.Set(ctx, scheduleKey, data, 7*24*time.Hour).Err(); err != nil {
+			s.logger.Error("failed to reschedule recurring experiment in Redis",
+				zap.String("experiment_id", se.ExperimentID.String()),
+				zap.Error(err),
+			)
+		}
 	}
 
 	s.logger.Debug("recurring experiment rescheduled",

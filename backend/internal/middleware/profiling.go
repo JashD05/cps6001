@@ -234,11 +234,14 @@ func (p *Profiler) trimLoop() {
 // GetMetrics computes and returns a snapshot of all profiling metrics within
 // the current sliding window. It is safe to call from any goroutine.
 func (p *Profiler) GetMetrics() *MetricsSnapshot {
-	p.mu.RLock()
-	// Copy metrics slice to avoid holding the read lock during computation.
+	p.mu.Lock()
+	// Trim first so the snapshot reflects the active sliding window even if
+	// the background cleanup goroutine has not run yet.
+	p.trimLocked()
+	// Copy metrics slice to avoid holding the lock during computation.
 	metrics := make([]requestMetric, len(p.metrics))
 	copy(metrics, p.metrics)
-	p.mu.RUnlock()
+	p.mu.Unlock()
 
 	snapshot := &MetricsSnapshot{
 		WindowSeconds:    p.window.Seconds(),

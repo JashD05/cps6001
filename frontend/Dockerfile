@@ -30,8 +30,8 @@ RUN npm install --ignore-scripts && \
 FROM dependencies AS development
 
 ENV NODE_ENV=development
-ENV VITE_API_URL=http://localhost:8080/api/v1
-ENV VITE_WS_URL=ws://localhost:8080/ws
+ENV VITE_API_BASE_URL=http://localhost:8081/api/v1
+ENV VITE_WS_URL=ws://localhost:8081/ws
 
 COPY . .
 

@@ -573,7 +573,7 @@ export function useWSEvent<T = unknown>(
     const unsub = clientRef.current.on(eventType, handler);
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventType, ...deps]);
+  }, [eventType, handler, ...deps]);
 }
 
 // ---------------------------------------------------------------------------

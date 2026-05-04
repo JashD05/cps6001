@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 
 	"go.uber.org/zap"
@@ -851,7 +852,7 @@ func (n *NetworkPolicyController) peerMatchesDestination(peer PeerInfo, dest Des
 
 	// Match namespace and pod selector.
 	if dest.Namespace != "" {
-		if peer.Namespace != "" && strings.Contains(peer.Namespace, dest.Namespace) {
+		if peer.Namespace != "" && peer.Namespace == dest.Namespace {
 			return true
 		}
 	}
@@ -876,7 +877,7 @@ func (n *NetworkPolicyController) peerMatchesSource(peer PeerInfo, source Source
 
 	// Match namespace selector.
 	if source.Namespace != "" && peer.Namespace != "" {
-		if strings.Contains(peer.Namespace, source.Namespace) {
+		if peer.Namespace == source.Namespace {
 			return true
 		}
 	}
@@ -954,54 +955,28 @@ func labelSelectorsMatch(a, b *metav1.LabelSelector) bool {
 	return false
 }
 
-// cidrContainsIP performs a simple CIDR prefix check to determine if an IP
-// address falls within a CIDR range. For production use, consider using
-// the net package's ParseCIDR and Contains for full accuracy.
+// cidrContainsIP checks whether an IP address falls within a CIDR range
+// using Go's net package for full accuracy, including non-octet-aligned
+// prefix lengths.
 func cidrContainsIP(cidr, ip string) bool {
-	// Handle the common case of /0 (all IPs) and /32 or /128 (exact match).
+	// Handle the common case of /0 (all IPs).
 	if strings.HasSuffix(cidr, "/0") {
 		return true
 	}
 
-	// Extract the network portion of the CIDR.
-	parts := strings.Split(cidr, "/")
-	if len(parts) != 2 {
+	// Try standard CIDR matching first.
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
 		// If it's just an IP with no prefix, do exact match.
 		return cidr == ip
 	}
 
-	networkIP := parts[0]
-	prefixLen := 0
-	for _, c := range parts[1] {
-		prefixLen = prefixLen*10 + int(c-'0')
-	}
-
-	// For /32 (IPv4) or /128 (IPv6), exact match.
-	if prefixLen >= 32 && strings.Contains(networkIP, ".") {
-		return networkIP == ip
-	}
-	if prefixLen >= 128 && strings.Contains(networkIP, ":") {
-		return networkIP == ip
-	}
-
-	// For other prefix lengths, do a simple prefix match.
-	// This is a simplified check; for full accuracy, use net.ParseCIDR.
-	ipParts := strings.Split(ip, ".")
-	netParts := strings.Split(networkIP, ".")
-
-	if len(ipParts) != len(netParts) {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
 		return false
 	}
 
-	// Calculate how many octets to compare based on the prefix length.
-	octetsToCompare := prefixLen / 8
-	for i := 0; i < octetsToCompare && i < len(ipParts) && i < len(netParts); i++ {
-		if ipParts[i] != netParts[i] {
-			return false
-		}
-	}
-
-	return true
+	return network.Contains(parsedIP)
 }
 
 // GetPoliciesForPod returns all network policies that select pods with the

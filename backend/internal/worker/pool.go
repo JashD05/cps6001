@@ -15,7 +15,7 @@ import (
 )
 
 // DefaultWorkerCount is the default number of concurrent experiment workers.
-const DefaultWorkerCount = 5
+const DefaultWorkerCount = 10
 
 // Pool manages a set of background worker goroutines that dequeue and
 // execute experiments from the Redis priority queue. It provides concurrency

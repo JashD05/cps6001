@@ -2,7 +2,9 @@ package attack
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -722,24 +724,27 @@ func TestRegistry_ConcurrentAccess(t *testing.T) {
 
 func TestRegistry_Get_ConcurrentAccess(t *testing.T) {
 	r := NewRegistry()
-	done := make(chan bool, 10)
-
 	ids := []string{"pod-egress-test", "pod-ingress-test", "network-policy-test", "nonexistent"}
+	errCh := make(chan string, len(ids)*5)
 
+	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
+		wg.Add(1)
 		go func() {
-			defer func() { done <- true }()
+			defer wg.Done()
 			for _, id := range ids {
 				m, err := r.Get(id)
 				if err != nil && id != "nonexistent" {
-					t.Errorf("Get(%q) returned unexpected error: %v", id, err)
+					errCh <- fmt.Sprintf("Get(%q) returned unexpected error: %v", id, err)
 				}
 				_ = m
 			}
 		}()
 	}
+	wg.Wait()
+	close(errCh)
 
-	for i := 0; i < 5; i++ {
-		<-done
+	for errMsg := range errCh {
+		t.Error(errMsg)
 	}
 }

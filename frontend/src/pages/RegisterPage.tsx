@@ -36,7 +36,7 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { RootState, AppDispatch } from '@/store';
-import { clearAuth } from '@/store/authSlice';
+import { clearAuth, register } from '@/store/authSlice';
 
 interface RegisterFormData {
   name: string;
@@ -188,18 +188,18 @@ const RegisterPage: React.FC = () => {
     if (!validateStep(1)) return;
 
     try {
-      // TODO: Replace with actual register API call when backend endpoint is ready
-      // await dispatch(register({
-      //   name: formData.name,
-      //   email: formData.email,
-      //   password: formData.password,
-      //   organization: formData.organization,
-      // })).unwrap();
+      await dispatch(
+        register({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          organization: formData.organization,
+        }),
+      ).unwrap();
 
-      // Simulate successful registration
       setRegisterSuccess(true);
     } catch (err) {
-      // Error handled by slice
+      // Error is already stored in Redux state by the rejected case
     }
   };
 

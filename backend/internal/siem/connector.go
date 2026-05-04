@@ -157,8 +157,10 @@ func NewSIEMConnector(provider string, cfg SIEMConfig) (SIEMConnector, error) {
 	}
 
 	switch provider {
-	case "mock", "":
+	case "mock":
 		return NewMockSIEM(cfg), nil
+	case "":
+		return nil, fmt.Errorf("SIEM provider must be specified; use \"mock\" for testing")
 	default:
 		return nil, fmt.Errorf("unsupported siem provider: %q (supported: mock)", provider)
 	}

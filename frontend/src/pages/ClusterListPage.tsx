@@ -47,6 +47,7 @@ import {
   Warning as DegradedIcon,
   CloudOff as UnreachableIcon,
   HelpOutline as UnknownIcon,
+  InfoOutlined as InfoIcon,
   MoreVert as MoreIcon,
   Visibility as ViewIcon,
   Settings as SettingsIcon,
@@ -89,6 +90,16 @@ const STATUS_OPTIONS: { value: ClusterStatus | 'all'; label: string }[] = [
   { value: 'unreachable', label: 'Unreachable' },
   { value: 'unknown', label: 'Unknown' },
 ];
+
+const CLUSTER_PAGE_HELP =
+  'A cluster is a group of servers where your apps run. Healthy means it is working, degraded means it has problems, and unreachable means the app cannot connect to it.';
+
+const CLUSTER_STAT_HELP = {
+  total: 'How many clusters the app knows about right now.',
+  healthy: 'Clusters that are working normally.',
+  degraded: 'Clusters that are working, but have problems or high load.',
+  unreachable: 'Clusters the app cannot reach right now.',
+};
 
 // ---------------------------------------------------------------------------
 // Mock Data
@@ -530,7 +541,8 @@ function ClusterCard({
   const navigate = useNavigate();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
 
-  const providerConfig = PROVIDER_CONFIG[cluster.provider] ?? PROVIDER_CONFIG['other'];
+  const providerConfig =
+    PROVIDER_CONFIG[cluster.provider ?? 'other'] ?? PROVIDER_CONFIG['other'];
 
   if (loading) {
     return (
@@ -721,7 +733,7 @@ function ClusterCard({
               sx={{ height: 24, fontSize: '0.6875rem', fontFamily: 'monospace' }}
             />
             <Chip
-              label={cluster.region}
+              label={cluster.region || 'unknown'}
               size="small"
               variant="outlined"
               sx={{ height: 24, fontSize: '0.6875rem' }}
@@ -742,10 +754,10 @@ function ClusterCard({
               color="text.secondary"
               sx={{ fontSize: '0.6875rem', mb: 0.5, display: 'block' }}
             >
-              Namespaces ({cluster.namespaceCount})
+              Namespaces ({cluster.namespaceCount ?? cluster.namespaces?.length ?? 0})
             </Typography>
             <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-              {cluster.namespaces.slice(0, 4).map((ns) => (
+              {(cluster.namespaces ?? []).slice(0, 4).map((ns) => (
                 <Chip
                   key={ns}
                   label={ns}
@@ -760,9 +772,9 @@ function ClusterCard({
                   }}
                 />
               ))}
-              {cluster.namespaces.length > 4 && (
+              {(cluster.namespaces ?? []).length > 4 && (
                 <Chip
-                  label={`+${cluster.namespaces.length - 4}`}
+                  label={`+${(cluster.namespaces ?? []).length - 4}`}
                   size="small"
                   sx={{
                     height: 20,
@@ -801,28 +813,32 @@ function ClusterCard({
             color="text.disabled"
             sx={{ fontSize: '0.625rem' }}
           >
-            Checked {formatRelativeTime(cluster.lastHealthCheck)}
+            Checked {formatRelativeTime(cluster.lastHealthCheck ?? null)}
           </Typography>
         </Stack>
       </CardContent>
 
       <CardActions sx={{ px: 2.5, pb: 2, pt: 0, justifyContent: 'space-between' }}>
-        <Button
-          size="small"
-          startIcon={<WifiIcon sx={{ fontSize: 16 }} />}
-          onClick={() => onHealthCheck(cluster.id)}
-          sx={{ textTransform: 'none', fontWeight: 600, fontSize: '0.8125rem' }}
-        >
-          Health Check
-        </Button>
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() => navigate('/experiments/new')}
-          sx={{ textTransform: 'none', fontWeight: 600, fontSize: '0.8125rem' }}
-        >
-          Run Experiment
-        </Button>
+        <Tooltip title="Test whether this cluster is reachable and healthy." arrow>
+          <Button
+            size="small"
+            startIcon={<WifiIcon sx={{ fontSize: 16 }} />}
+            onClick={() => onHealthCheck(cluster.id)}
+            sx={{ textTransform: 'none', fontWeight: 600, fontSize: '0.8125rem' }}
+          >
+            Health Check
+          </Button>
+        </Tooltip>
+        <Tooltip title="Start a chaos experiment on this cluster." arrow>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => navigate('/experiments/new')}
+            sx={{ textTransform: 'none', fontWeight: 600, fontSize: '0.8125rem' }}
+          >
+            Run Experiment
+          </Button>
+        </Tooltip>
       </CardActions>
     </Card>
   );
@@ -834,11 +850,13 @@ function StatCard({
   value,
   icon,
   color,
+  tooltip,
 }: {
   label: string;
   value: number;
   icon: React.ReactNode;
   color: string;
+  tooltip?: string;
 }) {
   const theme = useTheme();
   return (
@@ -863,13 +881,25 @@ function StatCard({
             <Typography variant="h5" fontWeight={700} sx={{ lineHeight: 1.2, color }}>
               {value}
             </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontWeight: 500, fontSize: '0.6875rem' }}
-            >
-              {label}
-            </Typography>
+            {tooltip ? (
+              <Tooltip title={tooltip} arrow placement="top-start">
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontWeight: 500, fontSize: '0.6875rem', cursor: 'help' }}
+                >
+                  {label}
+                </Typography>
+              </Tooltip>
+            ) : (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontWeight: 500, fontSize: '0.6875rem' }}
+              >
+                {label}
+              </Typography>
+            )}
           </Box>
         </Stack>
       </CardContent>
@@ -1087,7 +1117,7 @@ const ClusterListPage: React.FC = () => {
         !searchQuery ||
         cluster.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         cluster.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cluster.region.toLowerCase().includes(searchQuery.toLowerCase());
+        (cluster.region ?? '').toLowerCase().includes(searchQuery.toLowerCase());
 
       const matchesStatus = statusFilter === 'all' || cluster.status === statusFilter;
 
@@ -1197,32 +1227,50 @@ const ClusterListPage: React.FC = () => {
         mb={3}
       >
         <Box>
-          <Typography variant="h4" fontWeight={700} gutterBottom>
-            Clusters
-          </Typography>
+          <Stack direction="row" spacing={1} alignItems="center" mb={0.5}>
+            <Typography variant="h4" fontWeight={700}>
+              Clusters
+            </Typography>
+            <Tooltip title={CLUSTER_PAGE_HELP} arrow placement="right">
+              <IconButton
+                size="small"
+                aria-label="What are clusters?"
+                sx={{ color: 'text.secondary' }}
+              >
+                <InfoIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Stack>
           <Typography variant="body2" color="text.secondary">
-            Manage and monitor your Kubernetes clusters for chaos experiments.
+            Groups of servers where your apps run. This page shows whether each one is
+            healthy, degraded, or unreachable.
           </Typography>
         </Box>
 
         <Stack direction="row" spacing={1}>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={fetchClusters}
-            disabled={isLoading}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            Refresh
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setRegisterDialogOpen(true)}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            Register Cluster
-          </Button>
+          <Tooltip title="Reload the latest cluster status and metrics." arrow>
+            <span>
+              <Button
+                variant="outlined"
+                startIcon={<RefreshIcon />}
+                onClick={fetchClusters}
+                disabled={isLoading}
+                sx={{ textTransform: 'none', fontWeight: 600 }}
+              >
+                Refresh
+              </Button>
+            </span>
+          </Tooltip>
+          <Tooltip title="Add a new cluster so it can be tracked and tested here." arrow>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setRegisterDialogOpen(true)}
+              sx={{ textTransform: 'none', fontWeight: 600 }}
+            >
+              Register Cluster
+            </Button>
+          </Tooltip>
         </Stack>
       </Stack>
 
@@ -1234,6 +1282,7 @@ const ClusterListPage: React.FC = () => {
             value={stats.total}
             color="#2563EB"
             icon={<ClusterIcon sx={{ fontSize: 18, color: '#2563EB' }} />}
+            tooltip={CLUSTER_STAT_HELP.total}
           />
         </Grid>
         <Grid item xs={6} sm={3}>
@@ -1242,6 +1291,7 @@ const ClusterListPage: React.FC = () => {
             value={stats.healthy}
             color="#10B981"
             icon={<HealthyIcon sx={{ fontSize: 18, color: '#10B981' }} />}
+            tooltip={CLUSTER_STAT_HELP.healthy}
           />
         </Grid>
         <Grid item xs={6} sm={3}>
@@ -1250,6 +1300,7 @@ const ClusterListPage: React.FC = () => {
             value={stats.degraded}
             color="#F59E0B"
             icon={<DegradedIcon sx={{ fontSize: 18, color: '#F59E0B' }} />}
+            tooltip={CLUSTER_STAT_HELP.degraded}
           />
         </Grid>
         <Grid item xs={6} sm={3}>
@@ -1258,6 +1309,7 @@ const ClusterListPage: React.FC = () => {
             value={stats.unreachable}
             color="#EF4444"
             icon={<UnreachableIcon sx={{ fontSize: 18, color: '#EF4444' }} />}
+            tooltip={CLUSTER_STAT_HELP.unreachable}
           />
         </Grid>
       </Grid>

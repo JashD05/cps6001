@@ -248,6 +248,9 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 		if allowed && origin != "" {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
+			// Only set Allow-Credentials when a specific origin is echoed.
+			// Browsers reject the combination of wildcard origin (*) and credentials.
+			c.Header("Access-Control-Allow-Credentials", "true")
 		} else if allowAll {
 			c.Header("Access-Control-Allow-Origin", "*")
 		}
@@ -256,7 +259,6 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
-		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Max-Age", "86400") // 24-hour preflight cache
 
 		// Handle preflight (OPTIONS) requests.

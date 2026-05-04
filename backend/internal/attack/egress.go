@@ -126,7 +126,7 @@ spec:
       echo "Starting egress test to {{.DestinationIP}}:{{.DestinationPort}}..."
       for i in $(seq 1 {{.Attempts}}); do
         echo "Attempt $i/{{.Attempts}}..."
-        if curl -s -o /dev/null -w "%{http_code}" --connect-timeout {{.TimeoutSeconds}} --max-time {{.TimeoutSeconds}} -{{.Protocol}} {{.DestinationIP}}:{{.DestinationPort}}; then
+        if curl -s -o /dev/null -w "%{http_code}" --connect-timeout {{.TimeoutSeconds}} --max-time {{.TimeoutSeconds}} {{.DestinationIP}}:{{.DestinationPort}}; then
           echo "CONNECTION_SUCCESS: Connected to {{.DestinationIP}}:{{.DestinationPort}}"
         else
           echo "CONNECTION_BLOCKED: Could not connect to {{.DestinationIP}}:{{.DestinationPort}}"

@@ -90,6 +90,8 @@ const getStatusActions = (
   status: Experiment['status'],
 ): { canRun: boolean; canStop: boolean } => {
   switch (status) {
+    case 'draft':
+    case 'active':
     case 'pending':
     case 'queued':
       return { canRun: true, canStop: false };
@@ -99,6 +101,7 @@ const getStatusActions = (
     case 'failed':
     case 'stopped':
     case 'timed_out':
+    case 'archived':
       return { canRun: true, canStop: false };
     default:
       return { canRun: false, canStop: false };
@@ -161,7 +164,12 @@ const CompactExperimentCard: React.FC<ExperimentCardProps> = ({
       onClick={handleClick}
     >
       <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          spacing={1.5}
+        >
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Stack direction="row" alignItems="center" spacing={1}>
               <Typography
@@ -172,7 +180,12 @@ const CompactExperimentCard: React.FC<ExperimentCardProps> = ({
               >
                 {experiment.name}
               </Typography>
-              <StatusBadge status={experiment.status} variant="pill" size="small" />
+              <StatusBadge
+                status={experiment.status}
+                variant="pill"
+                size="small"
+                label={experiment.status === 'pending' ? 'Draft' : undefined}
+              />
             </Stack>
             <Stack direction="row" spacing={1.5} mt={0.5}>
               {experiment.templateName && (
@@ -290,7 +303,12 @@ const FullExperimentCard: React.FC<ExperimentCardProps> = ({
     >
       <CardContent>
         {/* Header: Name + Status */}
-        <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1}>
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          justifyContent="space-between"
+          spacing={1}
+        >
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography variant="subtitle1" fontWeight={700} noWrap gutterBottom>
               {experiment.name}

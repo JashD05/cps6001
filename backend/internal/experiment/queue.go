@@ -20,9 +20,9 @@ const QueueKey = "experiment:priority_queue"
 //
 // The sorted set member format is: "{runID}" and the score is a composite of
 // priority and timestamp to guarantee FIFO ordering within the same priority.
-// The score is computed as: priority * 1e12 + (maxTimestamp - enqueueTime)
-// so that higher priority sorts first and earlier enqueued items sort before
-// later ones at the same priority.
+// The score is computed as: priority * priorityScale + (maxTimestampMilli -
+// enqueueTimeInMilliseconds) so that higher priority sorts first and earlier
+// enqueued items sort before later ones at the same priority.
 type Queue struct {
 	rdb    *redis.Client
 	logger *zap.Logger
@@ -36,10 +36,15 @@ func NewQueue(rdb *redis.Client, logger *zap.Logger) *Queue {
 	}
 }
 
-// maxTimestampNano is a large reference timestamp (year 2100 in nanoseconds)
+// priorityScale controls how much influence the priority component has on the
+// composite score. It must be larger than the maximum time component so that
+// higher priorities always outrank lower priorities.
+const priorityScale = 1e13
+
+// maxTimestampMilli is a large reference timestamp (year 2100 in milliseconds)
 // used to invert the time component so that earlier enqueues have higher
 // scores within the same priority level.
-var maxTimestampNano = time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+var maxTimestampMilli = time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
 
 // compositeScore computes the sorted set score from a priority and the
 // current time. The formula ensures:
@@ -48,9 +53,9 @@ var maxTimestampNano = time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
 //
 //   - Within the same priority, items enqueued earlier sort before later ones.
 //
-//     score = priority * 1e12 + (maxTimestampNano - now.UnixNano())
+//     score = priority * priorityScale + (maxTimestampMilli - now.UnixMilli())
 func compositeScore(priority int, now time.Time) float64 {
-	return float64(priority)*1e12 + float64(maxTimestampNano-now.UnixNano())
+	return float64(priority)*priorityScale + float64(maxTimestampMilli-now.UnixMilli())
 }
 
 // Enqueue adds an experiment run to the queue with the given priority.
@@ -249,7 +254,7 @@ func (q *Queue) ListWithScores(ctx context.Context) ([]QueueEntry, error) {
 		}
 
 		// Extract the original priority from the composite score.
-		priority := int(z.Score / 1e12)
+		priority := int(z.Score / priorityScale)
 
 		entries = append(entries, QueueEntry{
 			RunID:    runID,
@@ -313,9 +318,9 @@ func (q *Queue) IsQueued(ctx context.Context, runID uuid.UUID) (bool, error) {
 }
 
 // parsePriorityFromScore extracts the integer priority component from a
-// composite score. The priority is the floor of score / 1e12.
+// composite score. The priority is the floor of score / priorityScale.
 func parsePriorityFromScore(score float64) int {
-	return int(score / 1e12)
+	return int(score / priorityScale)
 }
 
 // Ensure parsePriorityFromScore is used (referenced in ListWithScores via

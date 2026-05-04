@@ -140,7 +140,7 @@ services:
       CHAOS_RATE_LIMIT_WINDOW: 60s
       CHAOS_K8S_NAMESPACE: chaos-sec-experiments
       CHAOS_K8S_POD_TIMEOUT: 600s
-      CHAOS_K8S_MAX_CONCURRENT: "5"
+      CHAOS_K8S_MAX_CONCURRENT: "10"
       CHAOS_K8S_IN_CLUSTER: "true"
     ports:
       - "8081:8080"
@@ -170,8 +170,8 @@ services:
     container_name: chaos-sec-frontend
     restart: unless-stopped
     environment:
-      REACT_APP_API_URL: http://localhost:8081/api/v1
-      REACT_APP_WS_URL: ws://localhost:8081/ws
+      VITE_API_BASE_URL: http://localhost:8081/api/v1
+      VITE_WS_URL: ws://localhost:8081/ws
       NODE_ENV: development
     ports:
       - "3000:3000"

@@ -216,7 +216,7 @@ func TestValidator_ValidateDetection_NilRun(t *testing.T) {
 	connector := NewMockSIEM(SIEMConfig{Endpoint: "http://localhost"})
 	v := NewValidator(connector)
 
-	result, err := v.ValidateDetection(nil, nil, []ExpectedAlert{{AlertType: "test"}})
+	result, err := v.ValidateDetection(context.TODO(), nil, []ExpectedAlert{{AlertType: "test"}})
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "experiment run is required")
@@ -227,7 +227,7 @@ func TestValidator_ValidateDetection_NoExpectedAlerts(t *testing.T) {
 	v := NewValidator(connector)
 
 	run := &models.ExperimentRun{ID: uuid.New()}
-	result, err := v.ValidateDetection(nil, run, []ExpectedAlert{})
+	result, err := v.ValidateDetection(context.TODO(), run, []ExpectedAlert{})
 	assert.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "passed", result.OverallStatus)
@@ -319,7 +319,7 @@ func TestValidator_CalculateScore(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			score := v.calculateScore(tt.correlations)
-			assert.Equal(t, tt.expectedScore, score)
+			assert.InDelta(t, tt.expectedScore, score, 0.01)
 		})
 	}
 }

@@ -29,7 +29,7 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { RootState, AppDispatch } from '@/store';
-import { login, clearAuth } from '@/store/authSlice';
+import { login, clearAuth, clearError } from '@/store/authSlice';
 
 const LoginPage: React.FC = () => {
   const theme = useTheme();
@@ -87,6 +87,7 @@ const LoginPage: React.FC = () => {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setLoginAttempted(true);
+    dispatch(clearError());
 
     if (!validateForm()) return;
 
@@ -221,6 +222,7 @@ const LoginPage: React.FC = () => {
                 value={email}
                 onChange={(e) => {
                   setEmail(e.target.value);
+                  dispatch(clearError());
                   if (formErrors.email)
                     setFormErrors((prev) => ({ ...prev, email: undefined }));
                 }}
@@ -251,6 +253,7 @@ const LoginPage: React.FC = () => {
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
+                  dispatch(clearError());
                   if (formErrors.password)
                     setFormErrors((prev) => ({ ...prev, password: undefined }));
                 }}

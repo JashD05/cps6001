@@ -982,7 +982,6 @@ func TestValidationEngine_WithSIEMIntegration(t *testing.T) {
 	}
 
 	// Execute steps and produce alerts
-	producedAlerts := make([]siem.SIEMAlert, 0)
 	for _, step := range steps {
 		alert := siem.SIEMAlert{
 			ID:        uuid.New().String(),
@@ -991,8 +990,6 @@ func TestValidationEngine_WithSIEMIntegration(t *testing.T) {
 			Source:    "chaos-engine",
 			Timestamp: time.Now().Add(-time.Duration(step.DelaySeconds) * time.Second),
 		}
-		producedAlerts = append(producedAlerts, alert)
-
 		// Ingest into mock SIEM
 		alertJSON, _ := json.Marshal(alert)
 		http.Post(mockSIEM.URL+"/api/v1/alerts", "application/json", bytes.NewBuffer(alertJSON))

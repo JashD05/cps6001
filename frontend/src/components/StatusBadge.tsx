@@ -13,6 +13,7 @@ import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import SearchIcon from '@mui/icons-material/Search';
 import CloudOffIcon from '@mui/icons-material/CloudOff';
 import SecurityIcon from '@mui/icons-material/Security';
+import ArchiveIcon from '@mui/icons-material/Archive';
 
 // ---------------------------------------------------------------------------
 // Status Type Mappings
@@ -22,13 +23,16 @@ export type StatusVariant = 'dot' | 'pill' | 'icon';
 export type StatusSize = 'small' | 'medium' | 'large';
 
 export type ExperimentStatus =
+  | 'draft'
+  | 'active'
   | 'pending'
   | 'queued'
   | 'running'
   | 'completed'
   | 'failed'
   | 'stopped'
-  | 'timed_out';
+  | 'timed_out'
+  | 'archived';
 
 export type ClusterStatus = 'healthy' | 'degraded' | 'unreachable' | 'unknown';
 
@@ -77,6 +81,13 @@ interface StatusConfig {
 
 const statusConfigMap: Record<string, StatusConfig> = {
   // Experiment statuses
+  draft: {
+    label: 'Draft',
+    color: '#9CA3AF',
+    bgColor: 'rgba(156, 163, 175, 0.12)',
+    borderColor: 'rgba(156, 163, 175, 0.24)',
+    icon: PendingIcon,
+  },
   pending: {
     label: 'Pending',
     color: '#64748B',
@@ -125,6 +136,13 @@ const statusConfigMap: Record<string, StatusConfig> = {
     bgColor: 'rgba(245, 158, 11, 0.12)',
     borderColor: 'rgba(245, 158, 11, 0.24)',
     icon: PauseIcon,
+  },
+  archived: {
+    label: 'Archived',
+    color: '#9CA3AF',
+    bgColor: 'rgba(156, 163, 175, 0.12)',
+    borderColor: 'rgba(156, 163, 175, 0.24)',
+    icon: ArchiveIcon,
   },
 
   // Cluster statuses
@@ -227,10 +245,10 @@ const statusConfigMap: Record<string, StatusConfig> = {
   // General statuses
   active: {
     label: 'Active',
-    color: '#10B981',
-    bgColor: 'rgba(16, 185, 129, 0.12)',
-    borderColor: 'rgba(16, 185, 129, 0.24)',
-    icon: FiberManualRecordIcon,
+    color: '#2563EB',
+    bgColor: 'rgba(37, 99, 235, 0.12)',
+    borderColor: 'rgba(37, 99, 235, 0.24)',
+    icon: PlayArrowIcon,
   },
   inactive: {
     label: 'Inactive',
@@ -337,7 +355,10 @@ const sizeConfigs: Record<StatusSize, SizeConfig> = {
 // ---------------------------------------------------------------------------
 
 const normalizeStatus = (status: string): string => {
-  return status.toLowerCase().replace(/[\s-]/g, '_').replace(/[^a-z_]/g, '');
+  return status
+    .toLowerCase()
+    .replace(/[\s-]/g, '_')
+    .replace(/[^a-z_]/g, '');
 };
 
 // ---------------------------------------------------------------------------
@@ -511,7 +532,8 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
         border: `1px solid ${config.borderColor}`,
         fontWeight: 600,
         fontSize: sizeConfig.fontSize,
-        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily:
+          "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         height: sizeConfig.minHeight,
         minHeight: sizeConfig.minHeight,
         '& .MuiChip-label': {

@@ -57,13 +57,16 @@ export interface AuthState {
 // ---------------------------------------------------------------------------
 
 export type ExperimentStatus =
+  | 'draft'
+  | 'active'
   | 'pending'
   | 'queued'
   | 'running'
   | 'completed'
   | 'failed'
   | 'stopped'
-  | 'timed_out';
+  | 'timed_out'
+  | 'archived';
 
 export type ExperimentStepStatus =
   | 'pending'
@@ -103,6 +106,7 @@ export interface Experiment {
   completedAt?: string;
   duration?: number;
   result?: ExperimentResult;
+  runs?: ExperimentRun[];
 }
 
 export interface ExperimentResult {
@@ -313,7 +317,12 @@ export interface ClusterListState {
 // ---------------------------------------------------------------------------
 
 export type SIEMAlertSeverity = 'informational' | 'low' | 'medium' | 'high' | 'critical';
-export type SIEMAlertStatus = 'new' | 'acknowledged' | 'investigating' | 'resolved' | 'false_positive';
+export type SIEMAlertStatus =
+  | 'new'
+  | 'acknowledged'
+  | 'investigating'
+  | 'resolved'
+  | 'false_positive';
 
 export interface SIEMAlert {
   id: string;
@@ -409,6 +418,26 @@ export interface DashboardState {
 export type ReportType = 'experiment' | 'compliance' | 'executive' | 'trend';
 export type ReportFormat = 'pdf' | 'csv' | 'json' | 'html';
 
+// Backend report response (snake_case)
+export interface ReportBackend {
+  id: string;
+  title: string;
+  type: string;
+  format: string;
+  description?: string;
+  experiment_ids?: string[];
+  date_range_from?: string;
+  date_range_to?: string;
+  status: string;
+  error_message?: string;
+  download_url?: string;
+  file_size?: number;
+  generated_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// Frontend report interface (camelCase) - accepts both formats
 export interface Report {
   id: string;
   title: string;
@@ -425,6 +454,31 @@ export interface Report {
   fileSize?: number;
   generatedBy: string;
   createdAt: string;
+}
+
+// Transform backend Report to frontend Report format
+export function normalizeReport(raw: ReportBackend): Report {
+  return {
+    id: raw.id,
+    title: raw.title,
+    type: raw.type as ReportType,
+    format: raw.format as ReportFormat,
+    description: raw.description || '',
+    experimentIds: raw.experiment_ids || [],
+    dateRange: {
+      from: raw.date_range_from || '',
+      to: raw.date_range_to || '',
+    },
+    status: (raw.status === 'generating' ||
+    raw.status === 'ready' ||
+    raw.status === 'error'
+      ? raw.status
+      : 'ready') as Report['status'],
+    downloadUrl: raw.download_url,
+    fileSize: raw.file_size,
+    generatedBy: raw.generated_by || 'system',
+    createdAt: raw.created_at || new Date().toISOString(),
+  };
 }
 
 export interface ReportListState {

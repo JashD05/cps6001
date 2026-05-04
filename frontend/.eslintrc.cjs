@@ -56,10 +56,7 @@ module.exports = {
         fixStyle: 'inline-type-imports',
       },
     ],
-    '@typescript-eslint/consistent-type-exports': [
-      'error',
-      { fixStyle: 'inline-type-imports' },
-    ],
+    '@typescript-eslint/consistent-type-exports': 'error',
     '@typescript-eslint/explicit-function-return-type': 'off',
     '@typescript-eslint/explicit-module-boundary-types': 'off',
     '@typescript-eslint/no-non-null-assertion': 'warn',
@@ -84,15 +81,7 @@ module.exports = {
     'import/order': [
       'warn',
       {
-        groups: [
-          'builtin',
-          'external',
-          'internal',
-          'parent',
-          'sibling',
-          'index',
-          'type',
-        ],
+        groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index', 'type'],
         'newlines-between': 'never',
         alphabetize: {
           order: 'asc',

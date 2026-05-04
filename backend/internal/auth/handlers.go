@@ -16,6 +16,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// dummyBcryptHash is a valid bcrypt hash used to prevent timing-based
+// username enumeration during login. It ensures bcrypt runs even when
+// the user doesn't exist, making response times similar in both cases.
+const dummyBcryptHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxep68lN4EtLdifOi"
+
 // Handler holds dependencies for authentication HTTP handlers.
 type Handler struct {
 	authSvc *AuthService
@@ -95,6 +100,10 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			// Perform a dummy bcrypt comparison to prevent timing-based
+			// username enumeration. This ensures the response takes roughly
+			// the same time whether the user exists or not.
+			_ = CheckPassword(req.Password, dummyBcryptHash)
 			h.logger.Warn("login attempt with unknown email", zap.String("email", req.Email))
 			c.JSON(http.StatusUnauthorized, models.ErrorResponse{
 				Error:   "unauthorized",
@@ -209,29 +218,9 @@ func (h *Handler) RefreshHandler(c *gin.Context) {
 		return
 	}
 
-	// Check if the token has been blacklisted in Redis
-	blacklistKey := fmt.Sprintf("token:blacklist:%s", req.RefreshToken)
-	blacklisted, err := h.rdb.Exists(c.Request.Context(), blacklistKey).Result()
-	if err != nil && err != redis.Nil {
-		h.logger.Error("redis error checking token blacklist", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:   "internal_error",
-			Message: "An internal error occurred.",
-			Code:    http.StatusInternalServerError,
-		})
-		return
-	}
-	if blacklisted > 0 {
-		h.logger.Warn("attempted use of blacklisted refresh token")
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
-			Error:   "token_revoked",
-			Message: "This refresh token has been revoked.",
-			Code:    http.StatusUnauthorized,
-		})
-		return
-	}
-
-	// Validate and parse the refresh token using AuthService
+	// Validate and parse the refresh token using AuthService first,
+	// so we can use the JTI claim for blacklist checks instead of the
+	// raw token string.
 	claims, err := h.authSvc.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
 		h.logger.Warn("invalid refresh token presented", zap.Error(err))
@@ -241,6 +230,30 @@ func (h *Handler) RefreshHandler(c *gin.Context) {
 			Code:    http.StatusUnauthorized,
 		})
 		return
+	}
+
+	// Check if the token has been blacklisted using the JTI claim
+	if h.rdb != nil && claims.ID != "" {
+		blacklistKey := fmt.Sprintf("token:blacklist:%s", claims.ID)
+		blacklisted, err := h.rdb.Exists(c.Request.Context(), blacklistKey).Result()
+		if err != nil && err != redis.Nil {
+			h.logger.Error("redis error checking token blacklist", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+				Error:   "internal_error",
+				Message: "An internal error occurred.",
+				Code:    http.StatusInternalServerError,
+			})
+			return
+		}
+		if blacklisted > 0 {
+			h.logger.Warn("attempted use of blacklisted refresh token")
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+				Error:   "token_revoked",
+				Message: "This refresh token has been revoked.",
+				Code:    http.StatusUnauthorized,
+			})
+			return
+		}
 	}
 
 	// Verify user still exists and is active
@@ -276,10 +289,11 @@ func (h *Handler) RefreshHandler(c *gin.Context) {
 		return
 	}
 
-	// Blacklist the old refresh token to prevent reuse
-	if claims.ExpiresAt != nil {
+	// Blacklist the old refresh token using JTI to prevent reuse
+	if h.rdb != nil && claims.ID != "" && claims.ExpiresAt != nil {
 		oldRefreshTTL := time.Until(claims.ExpiresAt.Time)
 		if oldRefreshTTL > 0 {
+			blacklistKey := fmt.Sprintf("token:blacklist:%s", claims.ID)
 			if err := h.rdb.Set(c.Request.Context(), blacklistKey, "1", oldRefreshTTL).Err(); err != nil {
 				h.logger.Error("failed to blacklist old refresh token", zap.Error(err))
 				// Continue: this is non-fatal, though token reuse is slightly more risky
@@ -398,11 +412,11 @@ func (h *Handler) LogoutHandler(c *gin.Context) {
 		return
 	}
 
-	// Blacklist the access token in Redis until its natural expiry
-	if claims.ExpiresAt != nil {
+	// Blacklist the access token in Redis using JTI until its natural expiry
+	if h.rdb != nil && claims.ID != "" && claims.ExpiresAt != nil {
 		tokenTTL := time.Until(claims.ExpiresAt.Time)
 		if tokenTTL > 0 {
-			blacklistKey := fmt.Sprintf("token:blacklist:%s", tokenString)
+			blacklistKey := fmt.Sprintf("token:blacklist:%s", claims.ID)
 			if err := h.rdb.Set(c.Request.Context(), blacklistKey, "1", tokenTTL).Err(); err != nil {
 				h.logger.Error("failed to blacklist access token on logout", zap.Error(err))
 				// Still return success to the client — the token will expire naturally

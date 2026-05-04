@@ -515,9 +515,7 @@ func (m *PodIngressTest) Cleanup(ctx context.Context, config AttackConfig) error
 	// Delete attacker pod.
 	if err := config.ClusterClient.DeletePod(ctx, sourceNamespace, attackerPodName); err != nil {
 		logger.Warn("failed to delete attacker pod", zap.Error(err))
-		if firstErr == nil {
-			firstErr = fmt.Errorf("failed to delete attacker pod %q: %w", attackerPodName, err)
-		}
+		firstErr = fmt.Errorf("failed to delete attacker pod %q: %w", attackerPodName, err)
 	}
 
 	// Delete target pod.

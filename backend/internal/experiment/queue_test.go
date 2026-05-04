@@ -3,7 +3,6 @@ package experiment
 import (
 	"context"
 	"os"
-	"sort"
 	"testing"
 	"time"
 
@@ -518,9 +517,6 @@ func TestQueue_MultiplePriorities(t *testing.T) {
 	}
 
 	// Verify priorities are in descending order.
-	if !sort.IntsAreSorted(dequeuedPriorities) {
-		t.Errorf("priorities not sorted descending: %v", dequeuedPriorities)
-	}
 	// Actually, we want descending order, so reverse-sorted means each
 	// element should be >= the next.
 	for i := 0; i < len(dequeuedPriorities)-1; i++ {

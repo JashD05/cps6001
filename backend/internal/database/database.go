@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
 	"time"
 
 	"github.com/chaos-sec/backend/internal/config"
@@ -137,21 +138,15 @@ func (db *DB) RunMigrations() error {
 
 	m, err := migrate.New(
 		db.config.MigrationsPath,
-		fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-			db.config.User,
-			db.config.Password,
-			db.config.Host,
-			db.config.Port,
-			db.config.Name,
-			db.config.SSLMode,
-		),
+		db.config.MigrateDSN(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create migrate instance: %w", err)
 	}
 	defer m.Close()
 
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+	err = m.Up()
+	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
@@ -170,14 +165,7 @@ func (db *DB) RollbackLastMigration() error {
 
 	m, err := migrate.New(
 		db.config.MigrationsPath,
-		fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-			db.config.User,
-			db.config.Password,
-			db.config.Host,
-			db.config.Port,
-			db.config.Name,
-			db.config.SSLMode,
-		),
+		db.config.MigrateDSN(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create migrate instance: %w", err)
@@ -196,14 +184,7 @@ func (db *DB) RollbackLastMigration() error {
 func (db *DB) MigrationVersion() (uint, bool, error) {
 	m, err := migrate.New(
 		db.config.MigrationsPath,
-		fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-			db.config.User,
-			db.config.Password,
-			db.config.Host,
-			db.config.Port,
-			db.config.Name,
-			db.config.SSLMode,
-		),
+		db.config.MigrateDSN(),
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("failed to create migrate instance: %w", err)
@@ -248,6 +229,13 @@ func (db *DB) CloseWithTimeout(timeout time.Duration) error {
 		return nil
 	case <-time.After(timeout):
 		db.logger.Warn("timed out waiting for database connections to close")
+		// Drain the goroutine in the background to prevent a leak.
+		// sql.DB.Close() is uncancellable, so we must let it finish.
+		go func() {
+			if err := <-done; err != nil {
+				db.logger.Error("deferred database close error", zap.Error(err))
+			}
+		}()
 		return errors.New("database close timed out")
 	}
 }
@@ -302,8 +290,8 @@ func (db *DB) InTx(fn func(*sql.Tx) error) error {
 }
 
 // InTxWithOptions executes a function within a database transaction with custom isolation.
-func (db *DB) InTxWithOptions(fn func(*sql.Tx) error, opts *sql.TxOptions) error {
-	tx, err := db.BeginTx(nil, opts)
+func (db *DB) InTxWithOptions(ctx context.Context, fn func(*sql.Tx) error, opts *sql.TxOptions) error {
+	tx, err := db.BeginTx(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}

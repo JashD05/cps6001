@@ -548,9 +548,7 @@ func (m *SecretAccessTest) Cleanup(ctx context.Context, config AttackConfig) err
 			zap.String("pod_name", apiPodName),
 			zap.Error(err),
 		)
-		if firstErr == nil {
-			firstErr = fmt.Errorf("failed to delete API test pod %q: %w", apiPodName, err)
-		}
+		firstErr = fmt.Errorf("failed to delete API test pod %q: %w", apiPodName, err)
 	}
 
 	// Delete mount test pod.
@@ -594,11 +592,9 @@ func isSecretAPIDenied(logs string) bool {
 // whether mounted secrets were accessible.
 func isSecretMountDenied(logs string) bool {
 	// If any secret content was found in mounts or env, access was NOT blocked.
-	if containsString(logs, "SECRET_ENV_NONE") == false {
-		// env grep found something — check if it's actually a secret match
-		// vs the "none found" message. If we find secret env vars, that's
-		// potentially a finding but not necessarily a failure.
-	}
+	// TODO: When SECRET_ENV_NONE is absent, check if env vars contain actual
+	// secret values vs the "none found" message. Secret env vars are a potential
+	// finding but not necessarily a failure.
 
 	// Key indicators of a control gap:
 	// - SECRET_SA_MOUNT_FOUND: service account token is mounted when it shouldn't be
