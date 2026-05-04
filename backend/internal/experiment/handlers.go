@@ -797,10 +797,8 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 	}
 
 	switch expStatus {
-	case "draft", "active", "pending", "queued":
-		// Valid states for execution — experiment has not yet been run or is idle
-	case "stopped", "completed", "failed", "timed_out", "archived":
-		// Terminal states — re-run allowed
+	case "draft", "active", "pending", "queued", "stopped", "completed", "failed", "timed_out", "archived":
+		// Re-run allowed from any non-running state
 	case "running":
 		c.JSON(http.StatusConflict, models.ErrorResponse{
 			Error:   "conflict",
