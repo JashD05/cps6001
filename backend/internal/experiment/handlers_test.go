@@ -121,7 +121,7 @@ func TestListExperiments_Success(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -172,7 +172,7 @@ func TestListExperiments_EmptyList(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -214,7 +214,7 @@ func TestListExperiments_Pagination(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -258,7 +258,7 @@ func TestListExperiments_FilterByStatus(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -294,7 +294,7 @@ func TestListExperiments_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	// No auth claims middleware — simulates unauthenticated request
@@ -316,7 +316,7 @@ func TestListExperiments_DatabaseError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -343,7 +343,7 @@ func TestGetExperiment_Success(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -399,7 +399,7 @@ func TestGetExperiment_NotFound(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -428,7 +428,7 @@ func TestGetExperiment_InvalidID(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -451,7 +451,7 @@ func TestGetExperiment_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	// No auth claims middleware
@@ -468,7 +468,7 @@ func TestGetExperiment_WrongOrg(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	// Use a different org's claims
 	otherOrgClaims := &auth.TokenClaims{
@@ -505,7 +505,7 @@ func TestCreateExperiment_Success(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -612,7 +612,7 @@ func TestCreateExperiment_MissingRequiredFields(t *testing.T) {
 			db, _ := setupTestDB(t)
 			cfg := setupTestConfig()
 			logger := zap.NewNop()
-			handler := NewHandler(db, nil, cfg, logger)
+			handler := NewHandler(db, nil, cfg, logger, nil)
 
 			claims := adminClaims()
 
@@ -636,7 +636,7 @@ func TestCreateExperiment_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	router.POST("/api/v1/experiments", handler.CreateExperiment)
@@ -662,7 +662,7 @@ func TestCreateExperiment_NoPermission(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := noPermClaims()
 
@@ -695,7 +695,7 @@ func TestCreateExperiment_TemplateNotFound(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -739,7 +739,7 @@ func TestDeleteExperiment_Success_Draft(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -774,7 +774,7 @@ func TestDeleteExperiment_Success_NonDraft(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -804,7 +804,7 @@ func TestDeleteExperiment_NotFound(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -833,7 +833,7 @@ func TestDeleteExperiment_HasRunningRuns(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -863,7 +863,7 @@ func TestDeleteExperiment_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	router.DELETE("/api/v1/experiments/:id", handler.DeleteExperiment)
@@ -879,7 +879,7 @@ func TestDeleteExperiment_NoDeletePermission(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	// Reader claims have no experiments:delete permission
 	claims := readerClaims()
@@ -903,7 +903,7 @@ func TestDeleteExperiment_InvalidID(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -930,7 +930,7 @@ func TestGenerateReport_Success_PDF(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -964,7 +964,7 @@ func TestGenerateReport_MissingExperimentIDs(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -994,7 +994,7 @@ func TestGenerateReport_InvalidType(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1024,7 +1024,7 @@ func TestGenerateReport_InvalidFormat(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1054,7 +1054,7 @@ func TestGenerateReport_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	router.POST("/api/v1/reports/generate", handler.GenerateReport)
@@ -1106,7 +1106,7 @@ func TestGenerateReport_MissingRequiredFields(t *testing.T) {
 			db, _ := setupTestDB(t)
 			cfg := setupTestConfig()
 			logger := zap.NewNop()
-			handler := NewHandler(db, nil, cfg, logger)
+			handler := NewHandler(db, nil, cfg, logger, nil)
 
 			claims := adminClaims()
 
@@ -1134,7 +1134,7 @@ func TestDownloadReport_Success(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1163,7 +1163,7 @@ func TestDownloadReport_JSONFormat(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1190,7 +1190,7 @@ func TestDownloadReport_CSVFormat(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1217,7 +1217,7 @@ func TestDownloadReport_HTMLFormat(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1244,7 +1244,7 @@ func TestDownloadReport_NotReady(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1274,7 +1274,7 @@ func TestDownloadReport_NotFound(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1298,7 +1298,7 @@ func TestDownloadReport_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	router.GET("/api/v1/reports/:id/download", handler.DownloadReport)
@@ -1314,7 +1314,7 @@ func TestDownloadReport_InvalidID(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1341,7 +1341,7 @@ func TestShareReport_Success(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1376,7 +1376,7 @@ func TestShareReport_InvalidEmail(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1404,7 +1404,7 @@ func TestShareReport_NotFound(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1433,7 +1433,7 @@ func TestShareReport_InvalidID(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1461,7 +1461,7 @@ func TestShareReport_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	router.POST("/api/v1/reports/:id/share", handler.ShareReport)
@@ -1482,7 +1482,7 @@ func TestShareReport_MissingEmails(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1544,9 +1544,6 @@ func boolPtr(b bool) *bool {
 // This also serves as a compilation check that the private helper
 // exists in the same package.
 var _ = isValidEmail
-
-// Verify getClaimsFromContext is accessible.
-var _ = getClaimsFromContext
 
 // Verify ShareReportRequest type is accessible.
 var _ = ShareReportRequest{}
@@ -1620,7 +1617,7 @@ func TestListReports_Success(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -1667,7 +1664,7 @@ func TestListReports_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	router.GET("/api/v1/reports", handler.ListReports)
@@ -1683,7 +1680,7 @@ func TestListReports_DatabaseError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -1710,7 +1707,7 @@ func TestGetReport_Success(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -1746,7 +1743,7 @@ func TestGetReport_NotFound(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -1770,7 +1767,7 @@ func TestGetReport_InvalidID(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -1797,7 +1794,7 @@ func TestDeleteReport_Success(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1821,7 +1818,7 @@ func TestDeleteReport_NotFound(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1849,7 +1846,7 @@ func TestListExperiments_SearchQuery(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -1885,7 +1882,7 @@ func TestListExperiments_InvalidQueryParams(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -1914,7 +1911,7 @@ func TestDownloadReport_ContentMissing(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1949,7 +1946,7 @@ func TestShareReport_DatabaseError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -1995,7 +1992,7 @@ func TestShareReport_MultipleInvalidEmails(t *testing.T) {
 			db, _ := setupTestDB(t)
 			cfg := setupTestConfig()
 			logger := zap.NewNop()
-			handler := NewHandler(db, nil, cfg, logger)
+			handler := NewHandler(db, nil, cfg, logger, nil)
 
 			claims := adminClaims()
 
@@ -2027,7 +2024,7 @@ func TestGenerateReport_InvalidExperimentID(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -2062,7 +2059,7 @@ func TestCreateExperiment_InvalidTemplateID(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -2094,7 +2091,7 @@ func TestGetExperiment_DatabaseError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -2122,7 +2119,7 @@ func TestDeleteExperiment_DatabaseError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -2150,7 +2147,7 @@ func TestDeleteReport_DatabaseError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -2178,7 +2175,7 @@ func TestDeleteReport_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	router.DELETE("/api/v1/reports/:id", handler.DeleteReport)
@@ -2198,7 +2195,7 @@ func TestDeleteReport_InvalidID(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -2225,7 +2222,7 @@ func TestGetReport_Unauthorized(t *testing.T) {
 	db, _ := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	router := setupTestRouter()
 	router.GET("/api/v1/reports/:id", handler.GetReport)
@@ -2245,7 +2242,7 @@ func TestGetReport_DatabaseError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -2273,7 +2270,7 @@ func TestDownloadReport_ErrorStatus(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -2308,7 +2305,7 @@ func TestListExperiments_DefaultPagination(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := readerClaims()
 
@@ -2347,7 +2344,7 @@ func TestGenerateReport_DatabaseError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -2386,7 +2383,7 @@ func TestCreateExperiment_DatabaseErrorOnBegin(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 
@@ -2428,7 +2425,7 @@ func TestCreateExperiment_TemplateCheckDBError(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
-	handler := NewHandler(db, nil, cfg, logger)
+	handler := NewHandler(db, nil, cfg, logger, nil)
 
 	claims := adminClaims()
 

@@ -16,6 +16,7 @@ import (
 	"github.com/chaos-sec/backend/internal/auth"
 	"github.com/chaos-sec/backend/internal/config"
 	"github.com/chaos-sec/backend/internal/models"
+	"github.com/chaos-sec/backend/internal/notification"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -25,12 +26,13 @@ import (
 
 // Handler holds dependencies for experiment HTTP handlers.
 type Handler struct {
-	db            *sql.DB
-	rdb           *redis.Client
-	cfg           *config.Config
-	logger        *zap.Logger
-	engine        *Engine        // Optional: set via SetEngine for coordinated stop support
-	reportService *ReportService // Report generation service
+	db              *sql.DB
+	rdb             *redis.Client
+	cfg             *config.Config
+	logger          *zap.Logger
+	engine          *Engine               // Optional: set via SetEngine for coordinated stop support
+	reportService   *ReportService        // Report generation service
+	notificationSvc *notification.Service // Notification service for emailing reports
 }
 
 // SetEngine sets the experiment engine on the handler, enabling coordinated
@@ -40,13 +42,14 @@ func (h *Handler) SetEngine(engine *Engine) {
 }
 
 // NewHandler creates a new experiment handler with the provided dependencies.
-func NewHandler(db *sql.DB, rdb *redis.Client, cfg *config.Config, logger *zap.Logger) *Handler {
+func NewHandler(db *sql.DB, rdb *redis.Client, cfg *config.Config, logger *zap.Logger, notificationSvc *notification.Service) *Handler {
 	return &Handler{
-		db:            db,
-		rdb:           rdb,
-		cfg:           cfg,
-		logger:        logger.Named("experiment_handler"),
-		reportService: NewReportService(db),
+		db:              db,
+		rdb:             rdb,
+		cfg:             cfg,
+		logger:          logger.Named("experiment_handler"),
+		reportService:   NewReportService(db),
+		notificationSvc: notificationSvc,
 	}
 }
 
@@ -2957,8 +2960,30 @@ func (h *Handler) ShareReport(c *gin.Context) {
 		return
 	}
 
-	// TODO: Integrate with an email service (e.g., SMTP or SendGrid) to send the report
-	// to the specified recipients. For now, log the share action.
+	// Send email notification to recipients via the notification service.
+	if h.notificationSvc != nil {
+		event := notification.NotificationEvent{
+			Type:    "report_shared",
+			Title:   "Security Report Shared",
+			Message: req.Message,
+			Metadata: map[string]interface{}{
+				"report_id": reportID.String(),
+				"title":     title,
+				"format":    format,
+				"shared_by": claims.UserID.String(),
+			},
+		}
+		results := h.notificationSvc.SendNotification(c.Request.Context(), event)
+		for _, result := range results {
+			if !result.Success {
+				h.logger.Warn("failed to send report share notification",
+					zap.String("channel", result.Channel),
+					zap.String("error", result.Error),
+				)
+			}
+		}
+	}
+
 	h.logger.Info("report shared",
 		zap.String("report_id", reportID.String()),
 		zap.Strings("recipients", req.Emails),

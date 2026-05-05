@@ -20,6 +20,7 @@ import (
 	"github.com/chaos-sec/backend/internal/kubernetes"
 	"github.com/chaos-sec/backend/internal/middleware"
 	"github.com/chaos-sec/backend/internal/models"
+	"github.com/chaos-sec/backend/internal/notification"
 	"github.com/chaos-sec/backend/internal/siem"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -106,7 +107,23 @@ func New(
 	}
 
 	// Create experiment handler.
-	expHandler := experiment.NewHandler(db.DB, rdb, cfg, logger)
+	notificationSvc := notification.NewService(&notification.Config{
+		SMTPHost:        cfg.Notification.SMTPHost,
+		SMTPPort:        cfg.Notification.SMTPPort,
+		SMTPUsername:    cfg.Notification.SMTPUsername,
+		SMTPPassword:    cfg.Notification.SMTPPassword,
+		SMTPFrom:        cfg.Notification.SMTPFrom,
+		SMTPFromName:    cfg.Notification.SMTPFromName,
+		SlackWebhookURL: cfg.Notification.SlackWebhookURL,
+		SlackChannel:    cfg.Notification.SlackChannel,
+		SlackUsername:   cfg.Notification.SlackUsername,
+		WebhookURL:      cfg.Notification.WebhookURL,
+		Enabled:         cfg.Notification.Enabled,
+		AsyncSend:       cfg.Notification.AsyncSend,
+		RetryCount:      cfg.Notification.RetryCount,
+		TimeoutSec:      cfg.Notification.TimeoutSec,
+	}, logger)
+	expHandler := experiment.NewHandler(db.DB, rdb, cfg, logger, notificationSvc)
 
 	r := &Router{
 		engine:      engine,

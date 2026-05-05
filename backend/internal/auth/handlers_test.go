@@ -1033,6 +1033,7 @@ func TestRefreshHandler_AccessTokenRejected(t *testing.T) {
 func TestRefreshHandler_BlacklistedToken(t *testing.T) {
 	db, _ := setupTestDB(t)
 	mr, rdb := setupMiniredis(t)
+	_ = mr
 	cfg := setupTestConfig()
 	logger := zap.NewNop()
 
@@ -1294,9 +1295,9 @@ func TestLogoutHandler_MissingAuthHeader(t *testing.T) {
 
 func TestLogoutHandler_MalformedAuthHeader(t *testing.T) {
 	tests := []struct {
-		name          string
-		authHeader    string
-		wantErrCode   string
+		name        string
+		authHeader  string
+		wantErrCode string
 	}{
 		{
 			name:        "basic auth instead of bearer",

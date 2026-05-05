@@ -34,6 +34,15 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => {
   return unwrapped as Record<string, unknown>;
 };
 
+const _asUser = (value: unknown): User | undefined => {
+  const unwrapped = unwrapResponseData<unknown>(value);
+  if (!unwrapped || typeof unwrapped !== 'object' || Array.isArray(unwrapped)) {
+    return undefined;
+  }
+
+  return unwrapped as User;
+};
+
 const notifyAuthSessionExpired = (reason: string): void => {
   if (typeof emitAuthSessionExpired === 'function') {
     emitAuthSessionExpired(reason);
@@ -57,12 +66,12 @@ export const login = createAsyncThunk(
 
       setTokens(accessToken, refreshToken);
 
-      const directUser = asRecord(resData.user) as User | undefined;
+      const directUser = _asUser(resData.user);
       let user: User | null = directUser ?? null;
       if (!user) {
         try {
           const meResponse = await authAPI.me();
-          user = (asRecord(meResponse.data) ?? meResponse.data) as User;
+          user = _asUser(meResponse.data) ?? (meResponse.data as unknown as User);
         } catch {
           // If /me fails we still proceed — user will be fetched later by ProtectedRoute
         }
@@ -101,12 +110,12 @@ export const register = createAsyncThunk(
 
       setTokens(accessToken, refreshToken);
 
-      const directUser = asRecord(resData.user) as User | undefined;
+      const directUser = _asUser(resData.user);
       let user: User | null = directUser ?? null;
       if (!user) {
         try {
           const meResponse = await authAPI.me();
-          user = (asRecord(meResponse.data) ?? meResponse.data) as User;
+          user = _asUser(meResponse.data) ?? (meResponse.data as unknown as User);
         } catch {
           // If /me fails we still proceed — user will be fetched later by ProtectedRoute
         }
@@ -129,22 +138,25 @@ export const register = createAsyncThunk(
   },
 );
 
-export const logout = createAsyncThunk('auth/logout', async (_, { rejectWithValue }) => {
-  try {
-    await authAPI.logout();
-    clearTokens();
-    
-  } catch (error: unknown) {
-    // Even if the server logout fails, clear local tokens
-    clearTokens();
-    let message = 'Logout failed on server, but you have been logged out locally.';
-    if (error && typeof error === 'object' && 'response' in error) {
-      const axiosError = error as { response?: { data?: { message?: string } } };
-      message = axiosError.response?.data?.message ?? message;
+export const logout = createAsyncThunk<void, void>(
+  'auth/logout',
+  async (_, { rejectWithValue }) => {
+    try {
+      await authAPI.logout();
+      clearTokens();
+      return;
+    } catch (error: unknown) {
+      // Even if the server logout fails, clear local tokens
+      clearTokens();
+      let message = 'Logout failed on server, but you have been logged out locally.';
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as { response?: { data?: { message?: string } } };
+        message = axiosError.response?.data?.message ?? message;
+      }
+      return rejectWithValue(message);
     }
-    return rejectWithValue(message);
-  }
-});
+  },
+);
 
 export const refreshToken = createAsyncThunk(
   'auth/refreshToken',
@@ -182,7 +194,7 @@ export const refreshToken = createAsyncThunk(
 export const me = createAsyncThunk('auth/me', async (_, { rejectWithValue }) => {
   try {
     const response = await authAPI.me();
-    return (asRecord(response.data) ?? response.data) as User;
+    return _asUser(response.data) ?? (response.data as unknown as User);
   } catch (error: unknown) {
     let message =
       error instanceof Error && error.message

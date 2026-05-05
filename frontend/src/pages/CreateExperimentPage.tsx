@@ -52,7 +52,7 @@ import {
   useTheme,
   useMediaQuery,
 } from '@mui/material';
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import StatusBadge from '@/components/StatusBadge';
@@ -793,7 +793,7 @@ const CreateExperimentPage: React.FC = () => {
   const [templates, setTemplates] = useState<AttackTemplate[]>(MOCK_TEMPLATES);
   const [clusters, setClusters] = useState<Cluster[]>(MOCK_CLUSTERS);
 
-  React.useEffect(() => {
+  useEffect(() => {
     let isMounted = true;
 
     const loadTemplates = async () => {
@@ -801,8 +801,14 @@ const CreateExperimentPage: React.FC = () => {
         const response = await templatesAPI.list();
         if (!isMounted) return;
 
-        const loadedTemplates = (response.data.items ??
-          response.data.data ??
+        const responseData = ('data' in response
+          ? response.data
+          : response) as unknown as {
+          items?: AttackTemplate[];
+          data?: AttackTemplate[];
+        };
+        const loadedTemplates = (responseData.items ??
+          responseData.data ??
           []) as AttackTemplate[];
 
         if (loadedTemplates.length > 0) {
@@ -818,9 +824,15 @@ const CreateExperimentPage: React.FC = () => {
         const response = await clustersAPI.list();
         if (!isMounted) return;
 
-        const loadedClusters = (response.data.items ??
-          response.data.data ??
-          []) as typeof response.data.items;
+        const responseData = ('data' in response
+          ? response.data
+          : response) as unknown as {
+          items?: Cluster[];
+          data?: Cluster[];
+        };
+        const loadedClusters = (responseData.items ??
+          responseData.data ??
+          []) as Cluster[];
 
         if (loadedClusters.length > 0) {
           setClusters(loadedClusters);
@@ -1146,7 +1158,7 @@ const CreateExperimentPage: React.FC = () => {
   );
 
   // Reset create status on unmount
-  React.useEffect(() => {
+  useEffect(() => {
     return () => {
       dispatch(resetCreateStatus());
     };

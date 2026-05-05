@@ -592,9 +592,6 @@ func isSecretAPIDenied(logs string) bool {
 // whether mounted secrets were accessible.
 func isSecretMountDenied(logs string) bool {
 	// If any secret content was found in mounts or env, access was NOT blocked.
-	// TODO: When SECRET_ENV_NONE is absent, check if env vars contain actual
-	// secret values vs the "none found" message. Secret env vars are a potential
-	// finding but not necessarily a failure.
 
 	// Key indicators of a control gap:
 	// - SECRET_SA_MOUNT_FOUND: service account token is mounted when it shouldn't be
@@ -607,6 +604,10 @@ func isSecretMountDenied(logs string) bool {
 		if containsString(logs, "SECRET_SA_FILE_FOUND") && !containsString(logs, "SECRET_SA_READ_DENIED") {
 			return false // SA token readable = control gap
 		}
+		// Also check for readable secret files in mount paths
+		if containsString(logs, "SECRET_FILE_FOUND") && !containsString(logs, "SECRET_FILE_READ_DENIED") {
+			return false // Secret file readable = control gap
+		}
 	}
 
 	// If all mount checks returned NOT_FOUND or NONE, controls are working.
@@ -616,7 +617,13 @@ func isSecretMountDenied(logs string) bool {
 		return true
 	}
 
-	// Default to blocked if markers are inconclusive.
+	// SECRET_ENV_NONE was not found. This could mean:
+	// - Env vars existed and contained actual secrets (control gap - return false)
+	// - Env vars existed but content was "none found" or similar (controls working - return true)
+	// - The env check command failed/inconclusive (safe default - return true)
+	//
+	// Without explicit markers confirming actual secret values in env vars,
+	// we cannot confirm a control gap. Default to safe (blocked).
 	return true
 }
 
