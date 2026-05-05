@@ -49,7 +49,7 @@ export const store = configureStore({
       },
     }),
   devTools: {
-    enabled: import.meta.env.DEV,
+    enabled: process.env.NODE_ENV !== 'production',
     feature: {
       pause: true,
       lock: true,

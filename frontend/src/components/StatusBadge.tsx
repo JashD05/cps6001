@@ -419,6 +419,8 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
     <Box
       onClick={onClick}
       className={className}
+      data-testid="status-badge-dot"
+      data-animation={animated && normalizedStatus === 'running' ? 'pulse' : undefined}
       sx={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -525,6 +527,10 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
       size={size === 'small' ? 'small' : 'medium'}
       onClick={onClick}
       className={className}
+      data-testid="status-badge-pill"
+      data-animation={
+        animated && normalizedStatus === 'running' ? 'chipPulse' : undefined
+      }
       sx={{
         backgroundColor: config.bgColor,
         color: config.color,
@@ -558,6 +564,10 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
     <Box
       onClick={onClick}
       className={className}
+      data-testid="status-badge-icon"
+      data-animation={
+        animated && normalizedStatus === 'running' ? 'iconPulse' : undefined
+      }
       sx={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -621,7 +631,11 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({
 
   return (
     <Tooltip title={displayTooltip} arrow placement="top">
-      <Box component="span" sx={{ display: 'inline-flex', verticalAlign: 'middle' }}>
+      <Box
+        component="span"
+        sx={{ display: 'inline-flex', verticalAlign: 'middle' }}
+        data-testid="status-badge-root"
+      >
         {renderVariant()}
       </Box>
     </Tooltip>

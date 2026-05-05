@@ -17,7 +17,7 @@ import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { me, setAuthFromStorage } from '@/store/authSlice';
-import { getAccessToken } from '@/services/api';
+import { getAccessToken, getRefreshToken } from '@/services/api';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -26,6 +26,7 @@ import { getAccessToken } from '@/services/api';
 // Mock the api module so we can control getAccessToken().
 jest.mock('@/services/api', () => ({
   getAccessToken: jest.fn(),
+  getRefreshToken: jest.fn(),
 }));
 
 // Mock the authSlice async thunks as plain actions so we can inspect dispatches.
@@ -42,6 +43,9 @@ jest.mock('@/store/authSlice', () => {
 });
 
 const mockedGetAccessToken = getAccessToken as jest.MockedFunction<typeof getAccessToken>;
+const mockedGetRefreshToken = getRefreshToken as jest.MockedFunction<
+  typeof getRefreshToken
+>;
 const mockedMe = me as jest.MockedFunction<typeof me>;
 const mockedSetAuthFromStorage = setAuthFromStorage as jest.MockedFunction<
   typeof setAuthFromStorage
@@ -133,7 +137,7 @@ function renderProtectedRoute(
       <MemoryRouter initialEntries={[initialPath]}>
         <Routes>
           <Route
-            path="/dashboard"
+            path="*"
             element={
               <ProtectedRoute>
                 <div data-testid="protected-content">Protected Page</div>
@@ -165,6 +169,7 @@ describe('ProtectedRoute – unauthenticated access', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedGetAccessToken.mockReturnValue(null);
+    mockedGetRefreshToken.mockReturnValue(null);
   });
 
   it('redirects to /login when the user is not authenticated', () => {
@@ -234,6 +239,7 @@ describe('ProtectedRoute – authenticated access', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedGetAccessToken.mockReturnValue('valid-token');
+    mockedGetRefreshToken.mockReturnValue('refresh-token');
   });
 
   it('renders children when the user is authenticated', () => {
@@ -321,6 +327,7 @@ describe('ProtectedRoute – loading state', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedGetAccessToken.mockReturnValue(null);
+    mockedGetRefreshToken.mockReturnValue(null);
   });
 
   it('shows a loading spinner when loading is pending and not authenticated', () => {
@@ -448,6 +455,7 @@ describe('ProtectedRoute – redirect URL preservation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedGetAccessToken.mockReturnValue(null);
+    mockedGetRefreshToken.mockReturnValue(null);
   });
 
   it('includes the original path in the redirect URL', () => {
@@ -470,7 +478,7 @@ describe('ProtectedRoute – redirect URL preservation', () => {
     });
   });
 
-  it('includes the expired=1 query parameter in the redirect URL', () => {
+  it('does not include expired=1 when there was no stored session', () => {
     const { locationRef } = renderProtectedRoute(
       {
         isAuthenticated: false,
@@ -484,7 +492,7 @@ describe('ProtectedRoute – redirect URL preservation', () => {
     );
 
     return waitFor(() => {
-      expect(locationRef.current).toContain('expired=1');
+      expect(locationRef.current).not.toContain('expired=1');
     });
   });
 
@@ -563,7 +571,7 @@ describe('ProtectedRoute – redirect URL preservation', () => {
     return waitFor(() => {
       const expected = encodeURIComponent('/experiments/123/logs?tab=errors');
       expect(locationRef.current).toContain(expected);
-      expect(locationRef.current).toContain('expired=1');
+      expect(locationRef.current).not.toContain('expired=1');
     });
   });
 });
@@ -575,10 +583,12 @@ describe('ProtectedRoute – redirect URL preservation', () => {
 describe('ProtectedRoute – auth restoration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedGetRefreshToken.mockReturnValue('stored-refresh-token');
   });
 
   it('dispatches setAuthFromStorage and me when a token exists but user is not authenticated', () => {
     mockedGetAccessToken.mockReturnValue('stored-token');
+    mockedGetRefreshToken.mockReturnValue('stored-refresh-token');
 
     renderProtectedRoute({
       isAuthenticated: false,
@@ -595,6 +605,7 @@ describe('ProtectedRoute – auth restoration', () => {
 
   it('does not dispatch auth restoration when no token is stored', () => {
     mockedGetAccessToken.mockReturnValue(null);
+    mockedGetRefreshToken.mockReturnValue(null);
 
     renderProtectedRoute({
       isAuthenticated: false,
@@ -628,6 +639,7 @@ describe('ProtectedRoute – auth restoration', () => {
 
   it('does not dispatch auth restoration when loading is already pending', () => {
     mockedGetAccessToken.mockReturnValue('stored-token');
+    mockedGetRefreshToken.mockReturnValue('stored-refresh-token');
 
     renderProtectedRoute({
       isAuthenticated: false,
@@ -645,6 +657,7 @@ describe('ProtectedRoute – auth restoration', () => {
 
   it('dispatches both setAuthFromStorage and me with a stored token present', () => {
     mockedGetAccessToken.mockReturnValue('my-access-token');
+    mockedGetRefreshToken.mockReturnValue('my-refresh-token');
 
     renderProtectedRoute({
       isAuthenticated: false,

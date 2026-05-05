@@ -697,6 +697,7 @@ describe('Auth Flow Integration', () => {
   // -------------------------------------------------------------------------
   describe('Token refresh flow', () => {
     it('updates tokens when the refresh thunk succeeds', async () => {
+      mockedGetRefreshToken.mockReturnValue('existing-refresh-token');
       const mockRefreshResponse = {
         accessToken: 'refreshed-access-token',
         refreshToken: 'refreshed-refresh-token',

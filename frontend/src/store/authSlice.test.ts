@@ -119,7 +119,7 @@ describe('authSlice – initial state', () => {
     expect(initialState.user).toBeNull();
     expect(initialState.accessToken).toBeNull();
     expect(initialState.refreshToken).toBeNull();
-    expect(initialState.isAuthenticated).toBe(true);
+    expect(initialState.isAuthenticated).toBe(false);
     expect(initialState.isLoading).toBe(false);
     expect(initialState.error).toBeNull();
   });

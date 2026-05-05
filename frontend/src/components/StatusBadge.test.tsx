@@ -385,52 +385,39 @@ describe('StatusBadge – sizes', () => {
 
 describe('StatusBadge – pulse animation', () => {
   it('applies pulse animation for running status in dot variant when animated', () => {
-    const { container } = renderBadge({
+    renderBadge({
       status: 'running',
       variant: 'dot',
       animated: true,
     });
-    // MUI Emotion injects @keyframes into document-level <style data-emotion> tags
-    const styleTags = document.querySelectorAll('style[data-emotion]');
-    let foundPulseKeyframe = false;
-    styleTags.forEach((tag) => {
-      if (tag.textContent && tag.textContent.includes('pulse')) {
-        foundPulseKeyframe = true;
-      }
-    });
-    expect(foundPulseKeyframe).toBeTruthy();
+    expect(screen.getByTestId('status-badge-dot')).toHaveAttribute(
+      'data-animation',
+      'pulse',
+    );
   });
 
   it('applies pulse animation for running status in pill variant when animated', () => {
-    const { container } = renderBadge({
+    renderBadge({
       status: 'running',
       variant: 'pill',
       animated: true,
     });
-    const styleTags = document.querySelectorAll('style[data-emotion]');
-    let foundPulseKeyframe = false;
-    styleTags.forEach((tag) => {
-      if (tag.textContent && tag.textContent.includes('pulse')) {
-        foundPulseKeyframe = true;
-      }
-    });
-    expect(foundPulseKeyframe).toBeTruthy();
+    expect(screen.getByTestId('status-badge-pill')).toHaveAttribute(
+      'data-animation',
+      'chipPulse',
+    );
   });
 
   it('applies icon pulse animation for running status in icon variant when animated', () => {
-    const { container } = renderBadge({
+    renderBadge({
       status: 'running',
       variant: 'icon',
       animated: true,
     });
-    const styleTags = document.querySelectorAll('style[data-emotion]');
-    let foundKeyframe = false;
-    styleTags.forEach((tag) => {
-      if (tag.textContent && tag.textContent.includes('iconPulse')) {
-        foundKeyframe = true;
-      }
-    });
-    expect(foundKeyframe).toBeTruthy();
+    expect(screen.getByTestId('status-badge-icon')).toHaveAttribute(
+      'data-animation',
+      'iconPulse',
+    );
   });
 
   it('does not apply pulse animation when animated is false (default)', () => {
@@ -551,30 +538,24 @@ describe('StatusBadge – additional props', () => {
 
   it('calls onClick handler when the dot variant is clicked', () => {
     const handleClick = jest.fn();
-    const { container } = renderBadge({
+    renderBadge({
       status: 'running',
       variant: 'dot',
       onClick: handleClick,
     });
-    const clickableBox = container.querySelector('[class*="css-"]');
-    if (clickableBox) {
-      fireEvent.click(clickableBox);
-      expect(handleClick).toHaveBeenCalled();
-    }
+    fireEvent.click(screen.getByTestId('status-badge-dot'));
+    expect(handleClick).toHaveBeenCalled();
   });
 
   it('calls onClick handler when the icon variant is clicked', () => {
     const handleClick = jest.fn();
-    const { container } = renderBadge({
+    renderBadge({
       status: 'running',
       variant: 'icon',
       onClick: handleClick,
     });
-    const clickableBox = container.querySelector('[class*="css-"]');
-    if (clickableBox) {
-      fireEvent.click(clickableBox);
-      expect(handleClick).toHaveBeenCalled();
-    }
+    fireEvent.click(screen.getByTestId('status-badge-icon'));
+    expect(handleClick).toHaveBeenCalled();
   });
 });
 

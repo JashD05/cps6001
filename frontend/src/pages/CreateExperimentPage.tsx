@@ -809,11 +809,9 @@ const CreateExperimentPage: React.FC = () => {
         const response = await templatesAPI.list();
         if (!isMounted) return;
 
-        const loadedTemplates = response.data.items.filter((template) =>
-          /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(
-            template.id,
-          ),
-        ) as AttackTemplate[];
+        const loadedTemplates = (response.data.items ??
+          response.data.data ??
+          []) as AttackTemplate[];
 
         if (loadedTemplates.length > 0) {
           setTemplates(loadedTemplates);
@@ -828,11 +826,9 @@ const CreateExperimentPage: React.FC = () => {
         const response = await clustersAPI.list();
         if (!isMounted) return;
 
-        const loadedClusters = response.data.items.filter((cluster) =>
-          /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(
-            cluster.id,
-          ),
-        );
+        const loadedClusters = (response.data.items ??
+          response.data.data ??
+          []) as typeof response.data.items;
 
         if (loadedClusters.length > 0) {
           setClusters(loadedClusters);
@@ -1418,7 +1414,7 @@ const CreateExperimentPage: React.FC = () => {
                       flexWrap="wrap"
                       useFlexGap
                     >
-                      {template.tags.slice(0, 3).map((tag) => (
+                      {(template.tags ?? []).slice(0, 3).map((tag) => (
                         <Chip
                           key={tag}
                           label={tag}
@@ -1427,9 +1423,9 @@ const CreateExperimentPage: React.FC = () => {
                           sx={{ height: 20, fontSize: '0.625rem' }}
                         />
                       ))}
-                      {template.tags.length > 3 && (
+                      {(template.tags?.length ?? 0) > 3 && (
                         <Chip
-                          label={`+${template.tags.length - 3}`}
+                          label={`+${(template.tags?.length ?? 0) - 3}`}
                           size="small"
                           variant="outlined"
                           sx={{ height: 20, fontSize: '0.625rem' }}

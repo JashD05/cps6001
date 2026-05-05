@@ -76,7 +76,7 @@ const AuthSessionWatcher: React.FC = () => {
         navigate(loginUrl, { replace: true });
       }
 
-      if (import.meta.env.DEV) {
+      if (process.env.NODE_ENV !== 'production') {
         console.warn('[Chaos-Sec] auth session expired', detail?.reason ?? 'unknown');
       }
     };

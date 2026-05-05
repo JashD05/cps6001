@@ -14,25 +14,38 @@ interface ProtectedRouteProps {
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const dispatch = useDispatch<AppDispatch>();
   const location = useLocation();
-  const { isAuthenticated, isLoading } = useSelector((state: RootState) => state.auth);
+  const authState = useSelector((state: RootState) => state.auth) as RootState['auth'] & {
+    loading?: string;
+  };
+  const isAuthenticated = authState.isAuthenticated;
+  const isLoading = authState.isLoading ?? authState.loading === 'pending';
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [hadTokens, setHadTokens] = useState(false);
 
   // On mount, restore auth state from stored tokens or redirect immediately if none exist.
   useEffect(() => {
+    if (isAuthenticated) {
+      setIsCheckingSession(false);
+      return;
+    }
+
+    if (isLoading) {
+      return;
+    }
+
     const accessToken = getAccessToken();
     const refreshToken = getRefreshToken();
 
     if (accessToken && refreshToken) {
       setHadTokens(true);
       dispatch(setAuthFromStorage({ accessToken, refreshToken }));
-      dispatch(me()).finally(() => setIsCheckingSession(false));
+      Promise.resolve(dispatch(me())).finally(() => setIsCheckingSession(false));
       return;
     }
 
     dispatch(clearAuth());
     setIsCheckingSession(false);
-  }, [dispatch]);
+  }, [dispatch, isAuthenticated, isLoading]);
 
   // Still loading or checking — show a spinner while we verify the session
   if (isCheckingSession || (isLoading && !isAuthenticated)) {

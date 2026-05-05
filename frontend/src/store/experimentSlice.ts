@@ -329,11 +329,29 @@ const experimentSlice = createSlice({
       })
       .addCase(fetchExperiments.fulfilled, (state, action) => {
         state.list.isLoading = false;
-        const payload = action.payload ?? {};
-        state.list.experiments = payload.items ?? [];
-        state.list.totalCount = payload.totalCount ?? 0;
-        state.list.currentPage = payload.page ?? 1;
-        state.list.pageSize = payload.pageSize ?? 10;
+        const payload = action.payload as
+          | {
+              items?: Experiment[];
+              data?: Experiment[];
+              experiments?: Experiment[];
+              totalCount?: number;
+              total?: number;
+              page?: number;
+              pageSize?: number;
+              pagination?: {
+                total?: number;
+                limit?: number;
+                page?: number;
+                totalPages?: number;
+              };
+            }
+          | undefined;
+        const items = payload?.items ?? payload?.data ?? payload?.experiments ?? [];
+        state.list.experiments = Array.isArray(items) ? items : [];
+        state.list.totalCount =
+          payload?.totalCount ?? payload?.total ?? payload?.pagination?.total ?? 0;
+        state.list.currentPage = payload?.page ?? payload?.pagination?.page ?? 1;
+        state.list.pageSize = payload?.pageSize ?? payload?.pagination?.limit ?? 10;
       })
       .addCase(fetchExperiments.rejected, (state, action) => {
         state.list.isLoading = false;
@@ -525,9 +543,23 @@ const experimentSlice = createSlice({
       })
       .addCase(fetchExperimentRuns.fulfilled, (state, action) => {
         state.runsLoading = false;
-        state.runs = action.payload.items;
-        state.runsTotalCount = action.payload.totalCount;
-        state.runsPage = action.payload.page;
+        const payload = action.payload as
+          | {
+              items?: ExperimentRun[];
+              data?: ExperimentRun[];
+              runs?: ExperimentRun[];
+              totalCount?: number;
+              total?: number;
+              page?: number;
+              pageSize?: number;
+              pagination?: { total?: number; limit?: number; page?: number };
+            }
+          | undefined;
+        const items = payload?.items ?? payload?.data ?? payload?.runs ?? [];
+        state.runs = Array.isArray(items) ? items : [];
+        state.runsTotalCount =
+          payload?.totalCount ?? payload?.total ?? payload?.pagination?.total ?? 0;
+        state.runsPage = payload?.page ?? payload?.pagination?.page ?? 1;
       })
       .addCase(fetchExperimentRuns.rejected, (state, action) => {
         state.runsLoading = false;

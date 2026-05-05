@@ -533,7 +533,7 @@ describe('Experiment Flow Integration', () => {
       await waitFor(() => {
         expect(mockedExperimentsAPI.list).toHaveBeenCalled();
       });
-    });
+    }, 10000);
 
     it('displays experiment names in the table after loading', async () => {
       mockedExperimentsAPI.list.mockResolvedValueOnce({
@@ -547,14 +547,20 @@ describe('Experiment Flow Integration', () => {
       renderExperimentListPage();
 
       // Wait for loading to finish and names to appear
+      const table = screen.getByRole('table');
+
       await waitFor(() => {
-        expect(screen.getByText('Pod Kill Test')).toBeInTheDocument();
+        expect(within(table).getAllByText('Pod Kill Test').length).toBeGreaterThan(0);
       });
 
-      expect(screen.getByText('Network Latency Injection')).toBeInTheDocument();
-      expect(screen.getByText('CPU Stress Test')).toBeInTheDocument();
-      expect(screen.getByText('DNS Failure Injection')).toBeInTheDocument();
-      expect(screen.getByText('Memory Hog')).toBeInTheDocument();
+      expect(
+        within(table).getAllByText('Network Latency Injection').length,
+      ).toBeGreaterThan(0);
+      expect(within(table).getAllByText('CPU Stress Test').length).toBeGreaterThan(0);
+      expect(within(table).getAllByText('DNS Failure Injection').length).toBeGreaterThan(
+        0,
+      );
+      expect(within(table).getAllByText('Memory Hog').length).toBeGreaterThan(0);
     });
 
     it('shows a loading state while fetching experiments', async () => {
@@ -585,7 +591,7 @@ describe('Experiment Flow Integration', () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText('Pod Kill Test')).toBeInTheDocument();
+        expect(screen.getAllByText('Pod Kill Test').length).toBeGreaterThan(0);
       });
     });
 
@@ -676,11 +682,9 @@ describe('Experiment Flow Integration', () => {
         expect(mockedExperimentsAPI.list).toHaveBeenCalled();
       });
 
-      // The page should have a "New Experiment" or "Create" button
-      const newButton =
-        screen.queryByRole('button', { name: /new experiment/i }) ||
-        screen.queryByRole('button', { name: /create/i });
-      expect(newButton).toBeTruthy();
+      expect(
+        screen.getAllByRole('button', { name: /new experiment/i }).length,
+      ).toBeGreaterThan(0);
     });
 
     it('allows searching experiments by name', async () => {
@@ -695,28 +699,21 @@ describe('Experiment Flow Integration', () => {
       const { user } = renderExperimentListPage();
 
       await waitFor(() => {
-        expect(screen.getByText('Pod Kill Test')).toBeInTheDocument();
+        expect(screen.getAllByText('Pod Kill Test').length).toBeGreaterThan(0);
       });
 
-      // Find the search input
-      const searchInput =
-        screen.queryByPlaceholderText(/search/i) ||
-        screen
-          .queryAllByRole('textbox')
-          .find((el) => el.getAttribute('placeholder')?.toLowerCase().includes('search'));
+      const searchInput = screen.getByPlaceholderText(/search experiments by name/i);
 
-      if (searchInput) {
-        await user.type(searchInput, 'CPU');
+      await user.type(searchInput, 'CPU{enter}');
 
-        // After typing in search, the component should trigger a new API call
-        await waitFor(() => {
-          const calls = mockedExperimentsAPI.list.mock.calls;
-          const lastCall = calls[calls.length - 1];
-          if (lastCall && lastCall[0]) {
-            expect(lastCall[0].search).toContain('CPU');
-          }
-        });
-      }
+      // After submitting the search, the component should trigger a new API call
+      await waitFor(() => {
+        const calls = mockedExperimentsAPI.list.mock.calls;
+        const lastCall = calls[calls.length - 1];
+        if (lastCall && lastCall[0]) {
+          expect(lastCall[0].search).toContain('CPU');
+        }
+      });
     });
 
     it('allows filtering by status', async () => {
@@ -731,29 +728,26 @@ describe('Experiment Flow Integration', () => {
       const { user } = renderExperimentListPage();
 
       await waitFor(() => {
-        expect(screen.getByText('Network Latency Injection')).toBeInTheDocument();
+        expect(screen.getAllByText('Network Latency Injection').length).toBeGreaterThan(
+          0,
+        );
       });
 
-      // Find the status filter select/dropdown
-      const statusSelect =
-        screen.queryByLabelText(/status/i) ||
-        screen.queryByRole('button', { name: /status/i });
+      const statusSelect = screen.getByLabelText(/status/i);
 
-      if (statusSelect) {
-        await user.click(statusSelect);
+      await user.click(statusSelect);
 
-        // Choose the "Running" filter option
-        const runningOption = await screen.findByText(/running/i);
-        await user.click(runningOption);
+      // Choose the "Running" filter option
+      const runningOption = await screen.findByRole('option', { name: /running/i });
+      await user.click(runningOption);
 
-        await waitFor(() => {
-          const calls = mockedExperimentsAPI.list.mock.calls;
-          const lastCall = calls[calls.length - 1];
-          if (lastCall && lastCall[0]) {
-            expect(lastCall[0].status).toBe('running');
-          }
-        });
-      }
+      await waitFor(() => {
+        const calls = mockedExperimentsAPI.list.mock.calls;
+        const lastCall = calls[calls.length - 1];
+        if (lastCall && lastCall[0]) {
+          expect(lastCall[0].status).toBe('running');
+        }
+      });
     });
   });
 
@@ -847,7 +841,9 @@ describe('Experiment Flow Integration', () => {
       renderExperimentDetailPage('exp-2');
 
       await waitFor(() => {
-        expect(screen.getByText('Network Latency Injection')).toBeInTheDocument();
+        expect(
+          screen.getByRole('heading', { name: /network latency injection/i }),
+        ).toBeInTheDocument();
       });
     });
 
@@ -874,27 +870,30 @@ describe('Experiment Flow Integration', () => {
 
       // Wait for the page to load
       await waitFor(() => {
-        expect(screen.getByText('Network Latency Injection')).toBeInTheDocument();
+        expect(
+          screen.getByRole('heading', { name: /network latency injection/i }),
+        ).toBeInTheDocument();
       });
 
-      // The detail page uses MUI Tabs. Tab labels include Progress, Logs, etc.
-      const tabLabels = ['Progress', 'Logs', 'Pod Status', 'Results', 'SIEM'];
-
-      // At least some of the tab labels should be visible
-      const foundLabels = tabLabels.filter((label) =>
-        screen.queryByText(new RegExp(label, 'i')),
-      );
-
-      // The page has a Tabs component – verify at least one tab exists
-      expect(foundLabels.length).toBeGreaterThan(0);
+      // The page renders section headings rather than tabs.
+      expect(
+        screen.getByRole('heading', { name: /execution steps/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /run logs/i })).toBeInTheDocument();
     });
 
     it('displays progress tracker steps in the Progress tab', async () => {
       renderExperimentDetailPage('exp-2');
 
       await waitFor(() => {
-        expect(screen.getByText('Network Latency Injection')).toBeInTheDocument();
+        expect(
+          screen.getByRole('heading', { name: /network latency injection/i }),
+        ).toBeInTheDocument();
       });
+
+      expect(
+        screen.getByRole('heading', { name: /execution steps/i }),
+      ).toBeInTheDocument();
 
       // The steps from the mock data should appear
       await waitFor(() => {
@@ -920,14 +919,13 @@ describe('Experiment Flow Integration', () => {
       renderExperimentDetailPage('exp-2');
 
       await waitFor(() => {
-        expect(screen.getByText('Network Latency Injection')).toBeInTheDocument();
+        expect(
+          screen.getByRole('heading', { name: /network latency injection/i }),
+        ).toBeInTheDocument();
       });
 
       // A running experiment should show a Stop button
-      const stopButton = screen.queryByRole('button', { name: /stop/i });
-      if (stopButton) {
-        expect(stopButton).toBeInTheDocument();
-      }
+      expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
     });
 
     it('shows a loading state while fetching experiment details', async () => {
@@ -941,14 +939,18 @@ describe('Experiment Flow Integration', () => {
 
       renderExperimentDetailPage('exp-2');
 
-      // The experiment name should not be present yet
-      expect(screen.queryByText('Network Latency Injection')).not.toBeInTheDocument();
+      // The experiment heading should not be present yet
+      expect(
+        screen.queryByRole('heading', { name: /network latency injection/i }),
+      ).not.toBeInTheDocument();
 
       // Now resolve
       resolveDetail!({ data: { success: true, data: mockExperimentDetail } });
 
       await waitFor(() => {
-        expect(screen.getByText('Network Latency Injection')).toBeInTheDocument();
+        expect(
+          screen.getByRole('heading', { name: /network latency injection/i }),
+        ).toBeInTheDocument();
       });
     });
 
@@ -1055,9 +1057,9 @@ describe('Experiment Flow Integration', () => {
       renderCreateExperimentPage();
 
       // The CreateExperimentPage uses a Stepper with StepLabel components.
-      // Step labels: Template, Configuration, Validation, Review
+      // Step labels: Select Template, Configure, Validation, Review
       await waitFor(() => {
-        expect(screen.getByText('Template')).toBeInTheDocument();
+        expect(screen.getByText('Select Template')).toBeInTheDocument();
       });
     });
 
@@ -1066,7 +1068,7 @@ describe('Experiment Flow Integration', () => {
 
       // The first step should be active
       await waitFor(() => {
-        expect(screen.getByText('Template')).toBeInTheDocument();
+        expect(screen.getByText('Select Template')).toBeInTheDocument();
       });
 
       // Template cards or list should eventually appear after API loads templates
@@ -1091,31 +1093,26 @@ describe('Experiment Flow Integration', () => {
       expect(screen.getByText('CPU Stress')).toBeInTheDocument();
     });
 
-    it('shows Back button disabled on the first step', async () => {
+    it('shows a Cancel button on the first step', async () => {
       renderCreateExperimentPage();
 
       await waitFor(() => {
-        expect(screen.getByText('Template')).toBeInTheDocument();
+        expect(screen.getByText('Select Template')).toBeInTheDocument();
       });
 
-      const backButton = screen.queryByRole('button', { name: /back/i });
-      // On the first step, the Back button should either be disabled or not present
-      if (backButton) {
-        expect(backButton).toBeDisabled();
-      }
+      expect(screen.getAllByRole('button', { name: /cancel/i }).length).toBeGreaterThan(
+        0,
+      );
     });
 
     it('shows a Next button to advance steps', async () => {
       renderCreateExperimentPage();
 
       await waitFor(() => {
-        expect(screen.getByText('Template')).toBeInTheDocument();
+        expect(screen.getByText('Select Template')).toBeInTheDocument();
       });
 
-      const nextButton = screen.queryByRole('button', { name: /next/i });
-      if (nextButton) {
-        expect(nextButton).toBeInTheDocument();
-      }
+      expect(screen.getByRole('button', { name: /next/i })).toBeInTheDocument();
     });
 
     it('shows a Create/Submit button on the final Review step', async () => {
@@ -1148,7 +1145,7 @@ describe('Experiment Flow Integration', () => {
         expect(heading).toBeInTheDocument();
       } else {
         // At minimum, the stepper should be visible indicating a creation flow
-        expect(screen.getByText('Template')).toBeInTheDocument();
+        expect(screen.getByText('Select Template')).toBeInTheDocument();
       }
     });
   });

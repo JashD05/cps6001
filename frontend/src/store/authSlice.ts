@@ -9,6 +9,38 @@ import {
 } from '@/services/api';
 
 // ---------------------------------------------------------------------------
+// API response helpers
+// ---------------------------------------------------------------------------
+
+const unwrapResponseData = <T>(value: unknown): T | undefined => {
+  if (
+    value &&
+    typeof value === 'object' &&
+    'data' in value &&
+    (value as { data?: unknown }).data !== undefined
+  ) {
+    return (value as { data: T }).data;
+  }
+
+  return value as T;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined => {
+  const unwrapped = unwrapResponseData<unknown>(value);
+  if (!unwrapped || typeof unwrapped !== 'object' || Array.isArray(unwrapped)) {
+    return undefined;
+  }
+
+  return unwrapped as Record<string, unknown>;
+};
+
+const notifyAuthSessionExpired = (reason: string): void => {
+  if (typeof emitAuthSessionExpired === 'function') {
+    emitAuthSessionExpired(reason);
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Async Thunks
 // ---------------------------------------------------------------------------
 
@@ -17,11 +49,7 @@ export const login = createAsyncThunk(
   async (credentials: LoginRequest, { rejectWithValue }) => {
     try {
       const response = await authAPI.login(credentials);
-      // The backend returns tokens in snake_case directly (no data wrapper):
-      // { access_token, refresh_token, expires_in, token_type }
-      // but the /me endpoint returns { data: { ... } }.
-      // Handle both formats so login always works.
-      const resData = response.data as unknown as Record<string, unknown>;
+      const resData = asRecord(response.data) ?? {};
       const accessToken = (resData.accessToken ?? resData.access_token) as string;
       const refreshToken = (resData.refreshToken ?? resData.refresh_token) as string;
       const expiresIn = (resData.expiresIn ?? resData.expires_in ?? 3600) as number;
@@ -29,13 +57,15 @@ export const login = createAsyncThunk(
 
       setTokens(accessToken, refreshToken);
 
-      // Fetch the user profile now that we have tokens
-      let user: User | null = null;
-      try {
-        const meResponse = await authAPI.me();
-        user = meResponse.data.data as User;
-      } catch {
-        // If /me fails we still proceed — user will be fetched later by ProtectedRoute
+      const directUser = asRecord(resData.user) as User | undefined;
+      let user: User | null = directUser ?? null;
+      if (!user) {
+        try {
+          const meResponse = await authAPI.me();
+          user = (asRecord(meResponse.data) ?? meResponse.data) as User;
+        } catch {
+          // If /me fails we still proceed — user will be fetched later by ProtectedRoute
+        }
       }
 
       return { accessToken, refreshToken, expiresIn, tokenType, user } as LoginResponse;
@@ -63,7 +93,7 @@ export const register = createAsyncThunk(
   ) => {
     try {
       const response = await authAPI.register(data);
-      const resData = response.data as unknown as Record<string, unknown>;
+      const resData = asRecord(response.data) ?? {};
       const accessToken = (resData.accessToken ?? resData.access_token) as string;
       const refreshToken = (resData.refreshToken ?? resData.refresh_token) as string;
       const expiresIn = (resData.expiresIn ?? resData.expires_in ?? 3600) as number;
@@ -71,13 +101,15 @@ export const register = createAsyncThunk(
 
       setTokens(accessToken, refreshToken);
 
-      // Fetch the user profile now that we have tokens
-      let user: User | null = null;
-      try {
-        const meResponse = await authAPI.me();
-        user = meResponse.data.data as User;
-      } catch {
-        // If /me fails we still proceed — user will be fetched later by ProtectedRoute
+      const directUser = asRecord(resData.user) as User | undefined;
+      let user: User | null = directUser ?? null;
+      if (!user) {
+        try {
+          const meResponse = await authAPI.me();
+          user = (asRecord(meResponse.data) ?? meResponse.data) as User;
+        } catch {
+          // If /me fails we still proceed — user will be fetched later by ProtectedRoute
+        }
       }
 
       return { accessToken, refreshToken, expiresIn, tokenType, user } as LoginResponse;
@@ -123,8 +155,7 @@ export const refreshToken = createAsyncThunk(
         throw new Error('No refresh token available');
       }
       const response = await authAPI.refresh(currentRefreshToken);
-      // The backend returns tokens in snake_case directly (no data wrapper).
-      const resData = response.data as unknown as Record<string, unknown>;
+      const resData = asRecord(response.data) ?? {};
       const accessToken = (resData.accessToken ?? resData.access_token) as string;
       const newRefreshToken = (resData.refreshToken ?? resData.refresh_token) as string;
       setTokens(accessToken, newRefreshToken);
@@ -142,7 +173,7 @@ export const refreshToken = createAsyncThunk(
       if (error instanceof Error && error.message === 'No refresh token available') {
         message = error.message;
       }
-      emitAuthSessionExpired(message);
+      notifyAuthSessionExpired(message);
       return rejectWithValue(message);
     }
   },
@@ -151,9 +182,12 @@ export const refreshToken = createAsyncThunk(
 export const me = createAsyncThunk('auth/me', async (_, { rejectWithValue }) => {
   try {
     const response = await authAPI.me();
-    return response.data.data as User;
+    return (asRecord(response.data) ?? response.data) as User;
   } catch (error: unknown) {
-    let message = 'Failed to fetch user profile.';
+    let message =
+      error instanceof Error && error.message
+        ? error.message
+        : 'Failed to fetch user profile.';
     if (error && typeof error === 'object' && 'response' in error) {
       const axiosError = error as {
         response?: { data?: { message?: string }; status?: number };
@@ -316,14 +350,16 @@ const authSlice = createSlice({
       state.isLoading = false;
       // If fetching user fails with 401, we are no longer authenticated
       const errorMsg =
-        (action.payload as string) ?? action.error.message ?? 'Failed to fetch user';
+        (action.payload as string) ??
+        action.error.message ??
+        'Failed to fetch user profile.';
       if (errorMsg.includes('expired') || errorMsg.includes('401')) {
         state.isAuthenticated = false;
         state.user = null;
         state.accessToken = null;
         state.refreshToken = null;
       }
-      state.error = errorMsg;
+      state.error = errorMsg || 'Failed to fetch user profile.';
     });
   },
 });
