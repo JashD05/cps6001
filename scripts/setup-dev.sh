@@ -263,8 +263,8 @@ start_infra() {
         docker compose -f "$COMPOSE_FILE" down
     fi
 
-    log_info "Starting Docker Compose services (postgres, redis, rabbitmq, mock-siem)..."
-    docker compose -f "$COMPOSE_FILE" up -d postgres redis rabbitmq mock-siem
+    log_info "Starting Docker Compose services (postgres, redis, mock-siem)..."
+    docker compose -f "$COMPOSE_FILE" up -d postgres redis mock-siem
 
     log_success "Docker Compose services started"
 }
@@ -292,18 +292,6 @@ wait_for_services() {
         log_error "Redis did not become reachable"
         log_info "Check logs: docker compose logs redis"
         exit 1
-    }
-
-    # Wait for RabbitMQ
-    wait_for_tcp "localhost" "5672" "RabbitMQ AMQP" 60 || {
-        log_error "RabbitMQ did not become reachable"
-        log_info "Check logs: docker compose logs rabbitmq"
-        exit 1
-    }
-
-    # Wait for RabbitMQ Management UI
-    wait_for_http "http://localhost:15672" "RabbitMQ Management" 30 || {
-        log_warn "RabbitMQ Management UI not responding (non-critical)"
     }
 
     # Wait for Mock SIEM
@@ -472,8 +460,6 @@ print_next_steps() {
     echo "    Frontend:          http://localhost:3000"
     echo "    PostgreSQL:        localhost:5432"
     echo "    Redis:             localhost:6379"
-    echo "    RabbitMQ AMQP:     localhost:5672"
-    echo "    RabbitMQ Mgmt:     http://localhost:15672  (chaossec / chaossec_rabbitmq_local_password)"
     echo "    Mock SIEM:         http://localhost:8089"
     echo "    Prometheus:        http://localhost:9091"
     echo "    Grafana:           http://localhost:3001  (admin / admin)"

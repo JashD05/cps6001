@@ -9,15 +9,15 @@
  *  5. Auth restoration from stored tokens
  */
 
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
+import React from 'react';
 import '@testing-library/jest-dom';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { Provider } from 'react-redux';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { configureStore } from '@reduxjs/toolkit';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { me, setAuthFromStorage } from '@/store/authSlice';
 import { getAccessToken, getRefreshToken } from '@/services/api';
+import { me, setAuthFromStorage } from '@/store/authSlice';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -79,7 +79,7 @@ let mockAuthState: MockAuthState = {
 
 const mockAuthReducer = (
   state: MockAuthState | undefined,
-  action: { type: string; payload?: unknown },
+  _action: { type: string; payload?: unknown },
 ) => {
   if (state === undefined) return mockAuthState;
   // Allow the test to override by just returning the current mock state.

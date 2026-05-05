@@ -8,6 +8,7 @@
  */
 
 import { configureStore } from '@reduxjs/toolkit';
+import { authAPI, setTokens, clearTokens, getRefreshToken } from '@/services/api';
 import authReducer, {
   login,
   logout,
@@ -18,7 +19,6 @@ import authReducer, {
   setAuthFromStorage,
   updateUserProfile,
 } from '@/store/authSlice';
-import { authAPI, setTokens, clearTokens, getRefreshToken } from '@/services/api';
 import type { AuthState, User, LoginResponse } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ function createTestStore(overrides?: Partial<AuthState>) {
   });
 }
 
-type TestStore = ReturnType<typeof createTestStore>;
+type _TestStore = ReturnType<typeof createTestStore>;
 
 /** Grab the initial state directly from the slice definition. */
 let initialState: AuthState;

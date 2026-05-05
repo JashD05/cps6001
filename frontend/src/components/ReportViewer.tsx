@@ -10,7 +10,27 @@
  * for print, download, and share (copy link to clipboard).
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Close as CloseIcon,
+  Download as DownloadIcon,
+  Print as PrintIcon,
+  Share as ShareIcon,
+  Refresh as RefreshIcon,
+  Assessment as ReportIcon,
+  Science as ExperimentIcon,
+  Error as ErrorIcon,
+  Warning as WarningIcon,
+  Info as InfoIcon,
+  Security as SecurityIcon,
+  Schedule as ScheduleIcon,
+  Speed as SpeedIcon,
+  BugReport as BugIcon,
+  Shield as ShieldIcon,
+  PictureAsPdf as PdfIcon,
+  DataObject as JsonIcon,
+  Language as HtmlIcon,
+  Block as BlockIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -39,34 +59,9 @@ import {
   LinearProgress,
   useTheme,
   useMediaQuery,
-  type SxProps,
-  type Theme,
 } from '@mui/material';
-import {
-  Close as CloseIcon,
-  Download as DownloadIcon,
-  Print as PrintIcon,
-  Share as ShareIcon,
-  Refresh as RefreshIcon,
-  Assessment as ReportIcon,
-  Science as ExperimentIcon,
-  CheckCircle as SuccessIcon,
-  Error as ErrorIcon,
-  Warning as WarningIcon,
-  Info as InfoIcon,
-  Security as SecurityIcon,
-  Schedule as ScheduleIcon,
-  Speed as SpeedIcon,
-  BugReport as BugIcon,
-  Shield as ShieldIcon,
-  Visibility as ViewIcon,
-  PictureAsPdf as PdfIcon,
-  DataObject as JsonIcon,
-  Language as HtmlIcon,
-  TrendingUp as TrendIcon,
-  Block as BlockIcon,
-} from '@mui/icons-material';
-import { reportsAPI, getErrorMessage } from '@/services/api';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { reportsAPI } from '@/services/api';
 import type { Report, ReportFormat } from '@/types';
 
 // ---------------------------------------------------------------------------

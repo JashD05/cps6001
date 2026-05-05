@@ -1,4 +1,27 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Search as SearchIcon,
+  Add as AddIcon,
+  Refresh as RefreshIcon,
+  Dns as ClusterIcon,
+  Cloud as CloudIcon,
+  Storage as StorageIcon,
+  Memory as MemoryIcon,
+  Speed as CpuIcon,
+  CheckCircle as HealthyIcon,
+  Warning as DegradedIcon,
+  CloudOff as UnreachableIcon,
+  InfoOutlined as InfoIcon,
+  MoreVert as MoreIcon,
+  Visibility as ViewIcon,
+  Settings as SettingsIcon,
+  Delete as DeleteIcon,
+  Clear as ClearIcon,
+  Wifi as WifiIcon,
+  VpnKey as VpnKeyIcon,
+  Terminal as TerminalIcon,
+  Schedule as ScheduleIcon,
+  ErrorOutline as ErrorIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -30,42 +53,16 @@ import {
   FormControl,
   InputLabel,
   Select,
-  type SelectChangeEvent,
   useTheme,
   alpha,
+  Snackbar,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  Add as AddIcon,
-  Refresh as RefreshIcon,
-  Dns as ClusterIcon,
-  Cloud as CloudIcon,
-  Storage as StorageIcon,
-  Memory as MemoryIcon,
-  Speed as CpuIcon,
-  CheckCircle as HealthyIcon,
-  Warning as DegradedIcon,
-  CloudOff as UnreachableIcon,
-  HelpOutline as UnknownIcon,
-  InfoOutlined as InfoIcon,
-  MoreVert as MoreIcon,
-  Visibility as ViewIcon,
-  Settings as SettingsIcon,
-  Delete as DeleteIcon,
-  Clear as ClearIcon,
-  FilterList as FilterIcon,
-  Wifi as WifiIcon,
-  WifiOff as WifiOffIcon,
-  VpnKey as VpnKeyIcon,
-  Terminal as TerminalIcon,
-  Schedule as ScheduleIcon,
-} from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDispatch } from 'react-redux';
-import type { AppDispatch } from '@/store';
-import { clustersAPI, getErrorMessage } from '@/services/api';
+import { useNavigate } from 'react-router-dom';
 import StatusBadge from '@/components/StatusBadge';
-import { MOCK_CLUSTERS, MOCK_CLUSTER_HEALTH } from '@/data/mockClusters';
+import { clustersAPI } from '@/services/api';
+import type { AppDispatch } from '@/store';
 import type { Cluster, ClusterStatus, ClusterHealth } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -121,20 +118,6 @@ const formatRelativeTime = (dateStr: string | undefined | null): string => {
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 30) return `${diffDays}d ago`;
   return date.toLocaleDateString();
-};
-
-const getStatusIcon = (status: ClusterStatus): React.ReactElement => {
-  switch (status) {
-    case 'healthy':
-      return <HealthyIcon sx={{ fontSize: 20, color: 'success.main' }} />;
-    case 'degraded':
-      return <DegradedIcon sx={{ fontSize: 20, color: 'warning.main' }} />;
-    case 'unreachable':
-      return <UnreachableIcon sx={{ fontSize: 20, color: 'error.main' }} />;
-    case 'unknown':
-    default:
-      return <UnknownIcon sx={{ fontSize: 20, color: 'text.secondary' }} />;
-  }
 };
 
 // ---------------------------------------------------------------------------
@@ -680,7 +663,6 @@ function StatCard({
   color: string;
   tooltip?: string;
 }) {
-  const theme = useTheme();
   return (
     <Card sx={{ borderRadius: 2, height: '100%' }}>
       <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
@@ -889,14 +871,13 @@ function RegisterClusterDialog({
 // ---------------------------------------------------------------------------
 
 const ClusterListPage: React.FC = () => {
-  const theme = useTheme();
-  const dispatch = useDispatch<AppDispatch>();
-  const navigate = useNavigate();
+  const _theme = useTheme();
+  const _dispatch = useDispatch<AppDispatch>();
+  const _navigate = useNavigate();
 
   // State
-  const [clusters, setClusters] = useState<Cluster[]>(MOCK_CLUSTERS);
-  const [healthData, setHealthData] =
-    useState<Record<string, ClusterHealth>>(MOCK_CLUSTER_HEALTH);
+  const [clusters, setClusters] = useState<Cluster[]>([]);
+  const [healthData, setHealthData] = useState<Record<string, ClusterHealth>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -910,6 +891,9 @@ const ClusterListPage: React.FC = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [clusterToDelete, setClusterToDelete] = useState<string | null>(null);
 
+  // Snackbar for health check errors
+  const [healthCheckError, setHealthCheckError] = useState<string | null>(null);
+
   // Fetch clusters
   const fetchClusters = useCallback(async () => {
     setIsLoading(true);
@@ -920,9 +904,7 @@ const ClusterListPage: React.FC = () => {
         setClusters(response.data.items);
       }
     } catch (err) {
-      // Use mock data if API is not available
-      setClusters(MOCK_CLUSTERS);
-      setHealthData(MOCK_CLUSTER_HEALTH);
+      setError('Failed to load clusters. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -967,14 +949,7 @@ const ClusterListPage: React.FC = () => {
       const health = response.data.data as ClusterHealth;
       setHealthData((prev) => ({ ...prev, [clusterId]: health }));
     } catch {
-      // Refresh mock data
-      const existingHealth = MOCK_CLUSTER_HEALTH[clusterId];
-      if (existingHealth) {
-        setHealthData((prev) => ({
-          ...prev,
-          [clusterId]: { ...existingHealth, lastChecked: new Date().toISOString() },
-        }));
-      }
+      setHealthCheckError('Health check failed. Please try again.');
     }
   }, []);
 
@@ -1309,7 +1284,22 @@ const ClusterListPage: React.FC = () => {
           {Array.from({ length: 6 }).map((_, idx) => (
             <Grid item xs={12} sm={6} lg={4} key={idx}>
               <ClusterCard
-                cluster={MOCK_CLUSTERS[0]}
+                cluster={{
+                  id: `skeleton-${idx}`,
+                  name: '',
+                  description: '',
+                  status: 'unknown' as ClusterStatus,
+                  provider: 'other',
+                  region: '',
+                  version: '',
+                  nodeCount: 0,
+                  namespaceCount: 0,
+                  namespaces: [],
+                  labels: {},
+                  lastHealthCheck: '',
+                  createdAt: '',
+                  updatedAt: '',
+                }}
                 onHealthCheck={() => {}}
                 onDelete={() => {}}
                 loading
@@ -1317,6 +1307,70 @@ const ClusterListPage: React.FC = () => {
             </Grid>
           ))}
         </Grid>
+      ) : error && clusters.length === 0 ? (
+        <Paper
+          elevation={0}
+          sx={{
+            border: '1px solid',
+            borderColor: 'error.light',
+            borderRadius: 2,
+            py: 8,
+            px: 3,
+            textAlign: 'center',
+          }}
+        >
+          <ErrorIcon sx={{ fontSize: 64, color: 'error.main', mb: 2 }} />
+          <Typography variant="h5" color="error.main" gutterBottom fontWeight={600}>
+            Failed to load clusters
+          </Typography>
+          <Typography
+            variant="body1"
+            color="text.secondary"
+            sx={{ mb: 3, maxWidth: 480, mx: 'auto' }}
+          >
+            {error}
+          </Typography>
+          <Button
+            variant="contained"
+            startIcon={<RefreshIcon />}
+            onClick={fetchClusters}
+            sx={{ textTransform: 'none' }}
+          >
+            Retry
+          </Button>
+        </Paper>
+      ) : clusters.length === 0 ? (
+        <Paper
+          elevation={0}
+          sx={{
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 2,
+            py: 8,
+            px: 3,
+            textAlign: 'center',
+          }}
+        >
+          <ClusterIcon sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
+          <Typography variant="h5" color="text.secondary" gutterBottom fontWeight={600}>
+            No clusters registered yet
+          </Typography>
+          <Typography
+            variant="body1"
+            color="text.disabled"
+            sx={{ mb: 3, maxWidth: 420, mx: 'auto' }}
+          >
+            Register a cluster to get started.
+          </Typography>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => setRegisterDialogOpen(true)}
+            sx={{ textTransform: 'none' }}
+          >
+            Register Cluster
+          </Button>
+        </Paper>
       ) : filteredClusters.length === 0 ? (
         <Paper
           elevation={0}
@@ -1338,27 +1392,15 @@ const ClusterListPage: React.FC = () => {
             color="text.disabled"
             sx={{ mb: 3, maxWidth: 420, mx: 'auto' }}
           >
-            {hasActiveFilters
-              ? 'Try adjusting your search or filter criteria.'
-              : 'Register your first Kubernetes cluster to start running chaos experiments.'}
+            Try adjusting your search or filter criteria.
           </Typography>
-          {hasActiveFilters ? (
-            <Button
-              variant="outlined"
-              startIcon={<ClearIcon />}
-              onClick={handleClearFilters}
-              sx={{ mr: 1, textTransform: 'none' }}
-            >
-              Clear Filters
-            </Button>
-          ) : null}
           <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setRegisterDialogOpen(true)}
+            variant="outlined"
+            startIcon={<ClearIcon />}
+            onClick={handleClearFilters}
             sx={{ textTransform: 'none' }}
           >
-            Register Cluster
+            Clear Filters
           </Button>
         </Paper>
       ) : (
@@ -1429,6 +1471,22 @@ const ClusterListPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Health Check Error Snackbar */}
+      <Snackbar
+        open={!!healthCheckError}
+        autoHideDuration={4000}
+        onClose={() => setHealthCheckError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          severity="error"
+          onClose={() => setHealthCheckError(null)}
+          sx={{ borderRadius: 2 }}
+        >
+          {healthCheckError}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

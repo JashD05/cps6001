@@ -1,5 +1,21 @@
-import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import {
+  Add as AddIcon,
+  Assessment as ReportIcon,
+  Security as SecurityIcon,
+  TrendingUp as TrendingUpIcon,
+  TrendingDown as TrendingDownIcon,
+  TrendingFlat as TrendingFlatIcon,
+  Science as ExperimentIcon,
+  PlayArrow as RunningIcon,
+  CheckCircle as CompletedIcon,
+  Error as FailedIcon,
+  Dns as ClusterIcon,
+  ArrowForward as ArrowForwardIcon,
+  Refresh as RefreshIcon,
+  Shield as ShieldIcon,
+  Speed as SpeedIcon,
+  Warning as WarningIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Card,
@@ -14,7 +30,6 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Paper,
   LinearProgress,
   Chip,
   IconButton,
@@ -24,25 +39,8 @@ import {
   Divider,
   useTheme,
 } from '@mui/material';
-import {
-  Add as AddIcon,
-  Assessment as ReportIcon,
-  Security as SecurityIcon,
-  TrendingUp as TrendingUpIcon,
-  TrendingDown as TrendingDownIcon,
-  TrendingFlat as TrendingFlatIcon,
-  Science as ExperimentIcon,
-  PlayArrow as RunningIcon,
-  CheckCircle as CompletedIcon,
-  Error as FailedIcon,
-  Schedule as PendingIcon,
-  Dns as ClusterIcon,
-  ArrowForward as ArrowForwardIcon,
-  Refresh as RefreshIcon,
-  Shield as ShieldIcon,
-  Speed as SpeedIcon,
-  Warning as WarningIcon,
-} from '@mui/icons-material';
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AreaChart,
   Area,
@@ -59,119 +57,291 @@ import {
   Legend,
 } from 'recharts';
 import StatusBadge from '@/components/StatusBadge';
+import { dashboardAPI } from '@/services/api';
 import { useAppSelector } from '@/store';
 import {
   selectExperimentList,
   selectExperimentListLoading,
   selectExperimentStats,
 } from '@/store/experimentSlice';
-import type { Experiment, ClusterHealth, DashboardSummary } from '@/types';
+import type {
+  Experiment,
+  ClusterHealth,
+  DashboardSummary,
+  ActivityTimelinePoint,
+  ThreatCoverageCategory,
+} from '@/types';
 
 // ---------------------------------------------------------------------------
-// Mock Data (would come from API in production)
+// Prototype dashboard data
 // ---------------------------------------------------------------------------
 
-const MOCK_SECURITY_POSTURE_HISTORY = [
-  { date: 'Jan', score: 62 },
-  { date: 'Feb', score: 58 },
-  { date: 'Mar', score: 65 },
-  { date: 'Apr', score: 70 },
-  { date: 'May', score: 68 },
-  { date: 'Jun', score: 74 },
-  { date: 'Jul', score: 78 },
-  { date: 'Aug', score: 76 },
-  { date: 'Sep', score: 82 },
-  { date: 'Oct', score: 85 },
-  { date: 'Nov', score: 83 },
-  { date: 'Dec', score: 87 },
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const daysAgo = (days: number) => new Date(Date.now() - days * DAY_IN_MS).toISOString();
+
+const PROTOTYPE_SECURITY_POSTURE_HISTORY = [
+  { date: daysAgo(35), score: 72 },
+  { date: daysAgo(28), score: 75 },
+  { date: daysAgo(21), score: 77 },
+  { date: daysAgo(14), score: 81 },
+  { date: daysAgo(7), score: 83 },
+  { date: daysAgo(0), score: 84 },
 ];
 
-const MOCK_EXPERIMENT_TREND = [
-  { week: 'W1', passed: 4, failed: 1, total: 5 },
-  { week: 'W2', passed: 6, failed: 2, total: 8 },
-  { week: 'W3', passed: 3, failed: 0, total: 3 },
-  { week: 'W4', passed: 7, failed: 1, total: 8 },
-  { week: 'W5', passed: 5, failed: 3, total: 8 },
-  { week: 'W6', passed: 8, failed: 1, total: 9 },
-  { week: 'W7', passed: 6, failed: 0, total: 6 },
-  { week: 'W8', passed: 9, failed: 2, total: 11 },
-];
-
-const MOCK_THREAT_COVERAGE = [
-  { name: 'Network', validated: 12, untested: 5 },
-  { name: 'Application', validated: 8, untested: 7 },
-  { name: 'Identity', validated: 6, untested: 4 },
-  { name: 'Data', validated: 10, untested: 3 },
-  { name: 'Infrastructure', validated: 9, untested: 6 },
-];
-
-const MOCK_CLUSTER_HEALTH: ClusterHealth[] = [
-  {
-    clusterId: '1',
-    status: 'healthy',
-    cpuUsage: 42,
-    memoryUsage: 58,
-    podCount: 127,
-    nodeCount: 5,
-    errorRate: 0.02,
-    lastChecked: new Date().toISOString(),
-  },
-  {
-    clusterId: '2',
-    status: 'healthy',
-    cpuUsage: 31,
-    memoryUsage: 45,
-    podCount: 84,
-    nodeCount: 3,
-    errorRate: 0.01,
-    lastChecked: new Date().toISOString(),
-  },
-  {
-    clusterId: '3',
-    status: 'degraded',
-    cpuUsage: 78,
-    memoryUsage: 82,
-    podCount: 56,
-    nodeCount: 2,
-    errorRate: 0.08,
-    lastChecked: new Date().toISOString(),
-  },
-];
-
-const MOCK_SUMMARY: DashboardSummary = {
-  securityPostureScore: 87,
+const PROTOTYPE_DASHBOARD_SUMMARY: DashboardSummary = {
+  securityPostureScore: 84,
   postureTrend: {
     direction: 'up',
-    percentage: 4.2,
-    period: 'vs last month',
+    percentage: 12,
+    period: 'last 30 days',
   },
   experimentSummary: {
-    total: 156,
-    running: 3,
-    completed: 128,
-    failed: 18,
-    pending: 7,
-  },
-  recentExperiments: [],
-  clusterHealth: MOCK_CLUSTER_HEALTH,
-  threatCoverage: {
-    totalControls: 45,
-    validated: 32,
-    passed: 28,
+    total: 42,
+    running: 6,
+    completed: 30,
     failed: 4,
-    untested: 13,
-    coverage: 71.1,
+    pending: 2,
   },
-  experimentTrend: [],
-  topAttackTypes: [
-    { name: 'DNS Exfiltration', value: 24, color: '#2563EB' },
-    { name: 'Brute Force', value: 18, color: '#7C3AED' },
-    { name: 'Privilege Escalation', value: 15, color: '#F59E0B' },
-    { name: 'Container Escape', value: 12, color: '#10B981' },
-    { name: 'Network Lateral Movement', value: 9, color: '#EF4444' },
+  recentExperiments: [
+    {
+      id: 'demo-exp-1',
+      name: 'Pod Restart Drill',
+      description: 'Validate alerting when pods are restarted during a run.',
+      templateId: 'tpl-demo-1',
+      templateName: 'Kubernetes Pod Drill',
+      clusterId: 'cluster-prod',
+      clusterName: 'Production Cluster',
+      namespace: 'default',
+      status: 'completed',
+      progress: 100,
+      parameters: { duration: '5m' },
+      steps: [],
+      tags: ['kubernetes', 'alerts'],
+      createdBy: 'demo',
+      createdAt: daysAgo(2),
+      updatedAt: daysAgo(2),
+      startedAt: daysAgo(2),
+      completedAt: daysAgo(2),
+      result: {
+        success: true,
+        score: 96,
+        summary: 'Alerts fired within the expected detection window.',
+        details: ['SIEM rule triggered', 'Alert acknowledged by analyst'],
+        siemValidation: {
+          expectedAlertCount: 1,
+          receivedAlertCount: 1,
+          alerts: [],
+          detected: true,
+          detectionLatencyMs: 42,
+          coverage: 100,
+          details: ['Validated in simulation'],
+        },
+        startedAt: daysAgo(2),
+        completedAt: daysAgo(2),
+        duration: 300,
+      },
+    },
+    {
+      id: 'demo-exp-2',
+      name: 'Network Latency Spike',
+      description: 'Simulated latency injection against backend services.',
+      templateId: 'tpl-demo-2',
+      templateName: 'Latency Injection',
+      clusterId: 'cluster-prod',
+      clusterName: 'Production Cluster',
+      namespace: 'backend',
+      status: 'running',
+      progress: 58,
+      parameters: { latency: '250ms', duration: '10m' },
+      steps: [],
+      tags: ['network', 'resilience'],
+      createdBy: 'demo',
+      createdAt: daysAgo(1),
+      updatedAt: daysAgo(1),
+      startedAt: daysAgo(1),
+    },
+    {
+      id: 'demo-exp-3',
+      name: 'DNS Failure Injection',
+      description: 'Checks fallback DNS resolution under outage conditions.',
+      templateId: 'tpl-demo-3',
+      templateName: 'DNS Failure',
+      clusterId: 'cluster-staging',
+      clusterName: 'Staging Cluster',
+      namespace: 'testing',
+      status: 'failed',
+      progress: 75,
+      parameters: { window: '3m' },
+      steps: [],
+      tags: ['dns', 'failure'],
+      createdBy: 'demo',
+      createdAt: daysAgo(4),
+      updatedAt: daysAgo(4),
+      startedAt: daysAgo(4),
+      completedAt: daysAgo(4),
+      result: {
+        success: false,
+        score: 41,
+        summary: 'The alert was delayed beyond the acceptable threshold.',
+        details: ['Alert arrived after 2m 15s', 'Validation flagged as partial'],
+        siemValidation: {
+          expectedAlertCount: 1,
+          receivedAlertCount: 0,
+          alerts: [],
+          detected: false,
+          detectionLatencyMs: -1,
+          coverage: 0,
+          details: ['Alert missing in simulation'],
+        },
+        startedAt: daysAgo(4),
+        completedAt: daysAgo(4),
+        duration: 180,
+      },
+    },
+    {
+      id: 'demo-exp-4',
+      name: 'CPU Pressure Test',
+      description: 'Burst CPU load to validate auto-scaling response.',
+      templateId: 'tpl-demo-4',
+      templateName: 'Resource Stress',
+      clusterId: 'cluster-qa',
+      clusterName: 'QA Cluster',
+      namespace: 'stress',
+      status: 'pending',
+      progress: 0,
+      parameters: { cpu: '85%' },
+      steps: [],
+      tags: ['cpu', 'autoscaling'],
+      createdBy: 'demo',
+      createdAt: daysAgo(0),
+      updatedAt: daysAgo(0),
+    },
+    {
+      id: 'demo-exp-5',
+      name: 'Memory Exhaustion Trial',
+      description: 'Simulates memory pressure to verify graceful degradation.',
+      templateId: 'tpl-demo-5',
+      templateName: 'Memory Hog',
+      clusterId: 'cluster-qa',
+      clusterName: 'QA Cluster',
+      namespace: 'stress',
+      status: 'stopped',
+      progress: 40,
+      parameters: { memory: '2Gi' },
+      steps: [],
+      tags: ['memory'],
+      createdBy: 'demo',
+      createdAt: daysAgo(6),
+      updatedAt: daysAgo(6),
+      startedAt: daysAgo(6),
+      completedAt: daysAgo(6),
+    },
   ],
-  validationSuccessRate: [],
+  clusterHealth: [
+    {
+      clusterId: 'cluster-prod',
+      status: 'healthy',
+      cpuUsage: 46,
+      memoryUsage: 54,
+      podCount: 82,
+      nodeCount: 12,
+      errorRate: 0.4,
+      lastChecked: daysAgo(0),
+    },
+    {
+      clusterId: 'cluster-staging',
+      status: 'degraded',
+      cpuUsage: 71,
+      memoryUsage: 67,
+      podCount: 24,
+      nodeCount: 5,
+      errorRate: 3.2,
+      lastChecked: daysAgo(0),
+    },
+    {
+      clusterId: 'cluster-qa',
+      status: 'unreachable',
+      cpuUsage: 0,
+      memoryUsage: 0,
+      podCount: 0,
+      nodeCount: 0,
+      errorRate: 100,
+      lastChecked: daysAgo(1),
+    },
+  ],
+  threatCoverage: {
+    totalControls: 28,
+    validated: 22,
+    passed: 20,
+    failed: 2,
+    untested: 6,
+    coverage: 78.6,
+  },
+  threatCoverageByCategory: [
+    { name: 'Network', validated: 6, untested: 1 },
+    { name: 'Compute', validated: 5, untested: 1 },
+    { name: 'Access', validated: 4, untested: 2 },
+    { name: 'Storage', validated: 3, untested: 1 },
+    { name: 'SIEM', validated: 4, untested: 1 },
+  ],
+  experimentTrend: [
+    { date: 'W1', total: 2, passed: 2, failed: 0 },
+    { date: 'W2', total: 4, passed: 3, failed: 1 },
+    { date: 'W3', total: 5, passed: 4, failed: 1 },
+    { date: 'W4', total: 6, passed: 5, failed: 1 },
+    { date: 'W5', total: 7, passed: 6, failed: 1 },
+    { date: 'W6', total: 8, passed: 7, failed: 1 },
+    { date: 'W7', total: 9, passed: 8, failed: 1 },
+    { date: 'W8', total: 10, passed: 9, failed: 1 },
+  ],
+  topAttackTypes: [
+    { name: 'Pod Restart', value: 12 },
+    { name: 'DNS Failure', value: 9 },
+    { name: 'CPU Stress', value: 8 },
+    { name: 'Memory Hog', value: 6 },
+    { name: 'Latency Spike', value: 5 },
+  ],
+  validationSuccessRate: [
+    { timestamp: daysAgo(35), value: 68, label: 'Week 1' },
+    { timestamp: daysAgo(28), value: 70, label: 'Week 2' },
+    { timestamp: daysAgo(21), value: 73, label: 'Week 3' },
+    { timestamp: daysAgo(14), value: 76, label: 'Week 4' },
+    { timestamp: daysAgo(7), value: 79, label: 'Week 5' },
+    { timestamp: daysAgo(0), value: 81, label: 'Week 6' },
+  ],
 };
+
+function mergeDashboardSummary(summary: DashboardSummary): DashboardSummary {
+  return {
+    ...PROTOTYPE_DASHBOARD_SUMMARY,
+    ...summary,
+    recentExperiments:
+      summary.recentExperiments.length > 0
+        ? summary.recentExperiments
+        : PROTOTYPE_DASHBOARD_SUMMARY.recentExperiments,
+    clusterHealth:
+      summary.clusterHealth.length > 0
+        ? summary.clusterHealth
+        : PROTOTYPE_DASHBOARD_SUMMARY.clusterHealth,
+    threatCoverageByCategory:
+      summary.threatCoverageByCategory.length > 0
+        ? summary.threatCoverageByCategory
+        : PROTOTYPE_DASHBOARD_SUMMARY.threatCoverageByCategory,
+    experimentTrend:
+      summary.experimentTrend.length > 0
+        ? summary.experimentTrend
+        : PROTOTYPE_DASHBOARD_SUMMARY.experimentTrend,
+    topAttackTypes:
+      summary.topAttackTypes.length > 0
+        ? summary.topAttackTypes
+        : PROTOTYPE_DASHBOARD_SUMMARY.topAttackTypes,
+    validationSuccessRate:
+      summary.validationSuccessRate.length > 0
+        ? summary.validationSuccessRate
+        : PROTOTYPE_DASHBOARD_SUMMARY.validationSuccessRate,
+    threatCoverage: summary.threatCoverage ?? PROTOTYPE_DASHBOARD_SUMMARY.threatCoverage,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -681,7 +851,7 @@ function RecentExperimentsTable({
   loading?: boolean;
 }) {
   const navigate = useNavigate();
-  const theme = useTheme();
+  const _theme = useTheme();
 
   const formatRelativeTime = (dateStr: string): string => {
     const date = new Date(dateStr);
@@ -842,6 +1012,11 @@ const CHART_COLORS = [
   '#8B5CF6',
 ];
 
+const getChartColor = (label: string) => {
+  const hash = Array.from(label).reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return CHART_COLORS[hash % CHART_COLORS.length];
+};
+
 // ---------------------------------------------------------------------------
 // Main Dashboard Page
 // ---------------------------------------------------------------------------
@@ -853,36 +1028,106 @@ export default function DashboardPage() {
   const experiments = Array.isArray(useAppSelector(selectExperimentList))
     ? useAppSelector(selectExperimentList)
     : [];
-  const listLoading = useAppSelector(selectExperimentListLoading);
+  const _listLoading = useAppSelector(selectExperimentListLoading);
   const realStats = useAppSelector(selectExperimentStats) ?? {};
-  const stats = {
-    total: realStats.total ?? 0,
-    running: realStats.running ?? 0,
-    completed: realStats.completed ?? 0,
-    failed: realStats.failed ?? 0,
-    pending: realStats.pending ?? 0,
-  };
 
-  const [summary] = useState<DashboardSummary>(MOCK_SUMMARY);
+  // Dashboard API state
+  const [summary, setSummary] = useState<DashboardSummary>(PROTOTYPE_DASHBOARD_SUMMARY);
+  const [securityPostureHistory, setSecurityPostureHistory] = useState(
+    PROTOTYPE_SECURITY_POSTURE_HISTORY,
+  );
+  const [activityTimeline, setActivityTimeline] = useState<ActivityTimelinePoint[]>(
+    PROTOTYPE_DASHBOARD_SUMMARY.experimentTrend,
+  );
+  const [clusterHealthData, setClusterHealthData] = useState<ClusterHealth[]>(
+    PROTOTYPE_DASHBOARD_SUMMARY.clusterHealth,
+  );
+  const [threatCoverageByCategory, setThreatCoverageByCategory] = useState<
+    ThreatCoverageCategory[]
+  >(PROTOTYPE_DASHBOARD_SUMMARY.threatCoverageByCategory);
+  const [_error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
+
+  // Fetch dashboard data from API
+  const fetchDashboardData = useCallback(async () => {
+    setError(null);
+    try {
+      const [summaryRes, postureRes, timelineRes, clusterRes] = await Promise.allSettled([
+        dashboardAPI.getSummary(),
+        dashboardAPI.getSecurityPosture(),
+        dashboardAPI.getActivityTimeline(),
+        dashboardAPI.getClusterHealth(),
+      ]);
+
+      if (summaryRes.status === 'fulfilled') {
+        const res = summaryRes.value;
+        if (res.data?.success && res.data.data) {
+          setSummary(mergeDashboardSummary(res.data.data));
+          setThreatCoverageByCategory(
+            res.data.data.threatCoverageByCategory?.length
+              ? res.data.data.threatCoverageByCategory
+              : PROTOTYPE_DASHBOARD_SUMMARY.threatCoverageByCategory,
+          );
+        }
+      }
+
+      if (postureRes.status === 'fulfilled') {
+        const res = postureRes.value;
+        if (res.data?.success && res.data.data?.history?.length) {
+          setSecurityPostureHistory(res.data.data.history);
+        }
+      }
+
+      if (timelineRes.status === 'fulfilled') {
+        const res = timelineRes.value;
+        if (res.data?.success && res.data.data?.length) {
+          setActivityTimeline(res.data.data);
+        }
+      }
+
+      if (clusterRes.status === 'fulfilled') {
+        const res = clusterRes.value;
+        if (res.data?.success && res.data.data?.length) {
+          setClusterHealthData(res.data.data);
+        }
+      }
+
+      setLastRefreshed(new Date());
+    } catch {
+      setError('Failed to load dashboard data. Please try again.');
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
   // Refresh handler
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    setLastRefreshed(new Date());
-    setRefreshing(false);
-  }, []);
+    await fetchDashboardData();
+  }, [fetchDashboardData]);
 
-  // Merge real experiment data with mock summary
+  // Derive display values from API data, with Redux store fallback for experiments
   const displayExperiments = experiments.slice(0, 5);
-  const experimentSummary = {
-    total: stats.total || summary.experimentSummary.total,
-    running: stats.running || summary.experimentSummary.running,
-    completed: stats.completed || summary.experimentSummary.completed,
-    failed: stats.failed || summary.experimentSummary.failed,
-    pending: stats.pending || summary.experimentSummary.pending,
-  };
+  const experimentSummary = summary
+    ? {
+        total: realStats.total ?? summary.experimentSummary.total,
+        running: realStats.running ?? summary.experimentSummary.running,
+        completed: realStats.completed ?? summary.experimentSummary.completed,
+        failed: realStats.failed ?? summary.experimentSummary.failed,
+        pending: realStats.pending ?? summary.experimentSummary.pending,
+      }
+    : {
+        total: realStats.total ?? 0,
+        running: realStats.running ?? 0,
+        completed: realStats.completed ?? 0,
+        failed: realStats.failed ?? 0,
+        pending: realStats.pending ?? 0,
+      };
 
   return (
     <Box>
@@ -956,9 +1201,15 @@ export default function DashboardPage() {
         {/* Security Posture Score */}
         <Grid item xs={12} lg={5}>
           <SecurityPostureCard
-            score={summary.securityPostureScore}
-            trend={summary.postureTrend}
-            history={MOCK_SECURITY_POSTURE_HISTORY}
+            score={summary?.securityPostureScore ?? 0}
+            trend={
+              summary?.postureTrend ?? {
+                direction: 'stable' as const,
+                percentage: 0,
+                period: '',
+              }
+            }
+            history={securityPostureHistory}
             loading={false}
           />
         </Grid>
@@ -1020,14 +1271,14 @@ export default function DashboardPage() {
                   </Typography>
                 </Stack>
                 <Typography variant="h5" sx={{ fontWeight: 800, color: 'primary.main' }}>
-                  {summary.threatCoverage.coverage.toFixed(0)}%
+                  {summary?.threatCoverage.coverage.toFixed(0) ?? '0'}%
                 </Typography>
               </Stack>
 
               <Box sx={{ height: 200, width: '100%' }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={MOCK_THREAT_COVERAGE}
+                    data={threatCoverageByCategory}
                     margin={{ top: 0, right: 0, left: -10, bottom: 0 }}
                     barGap={2}
                   >
@@ -1109,7 +1360,7 @@ export default function DashboardPage() {
               <Box sx={{ height: 260, width: '100%' }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart
-                    data={MOCK_EXPERIMENT_TREND}
+                    data={activityTimeline}
                     margin={{ top: 5, right: 5, left: -15, bottom: 5 }}
                   >
                     <defs>
@@ -1144,7 +1395,7 @@ export default function DashboardPage() {
                       vertical={false}
                     />
                     <XAxis
-                      dataKey="week"
+                      dataKey="date"
                       axisLine={false}
                       tickLine={false}
                       tick={{ fontSize: 11, fill: theme.palette.text.secondary }}
@@ -1205,7 +1456,7 @@ export default function DashboardPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={summary.topAttackTypes}
+                      data={summary?.topAttackTypes ?? []}
                       cx="50%"
                       cy="50%"
                       innerRadius={50}
@@ -1214,10 +1465,10 @@ export default function DashboardPage() {
                       dataKey="value"
                       stroke="none"
                     >
-                      {summary.topAttackTypes.map((entry, index) => (
+                      {(summary?.topAttackTypes ?? []).map((entry, index) => (
                         <Cell
-                          key={`cell-${index}`}
-                          fill={entry.color ?? CHART_COLORS[index % CHART_COLORS.length]}
+                          key={entry.name}
+                          fill={entry.color ?? getChartColor(entry.name)}
                         />
                       ))}
                     </Pie>
@@ -1236,7 +1487,7 @@ export default function DashboardPage() {
               </Box>
 
               <Stack spacing={1}>
-                {summary.topAttackTypes.map((item, idx) => (
+                {(summary?.topAttackTypes ?? []).map((item, idx) => (
                   <Stack
                     key={item.name}
                     direction="row"
@@ -1279,10 +1530,7 @@ export default function DashboardPage() {
       <Grid container spacing={2.5} mb={3}>
         {/* Recent Experiments Table */}
         <Grid item xs={12} lg={8}>
-          <RecentExperimentsTable
-            experiments={displayExperiments}
-            loading={listLoading}
-          />
+          <RecentExperimentsTable experiments={displayExperiments} loading={false} />
         </Grid>
 
         {/* Cluster Health */}
@@ -1312,9 +1560,19 @@ export default function DashboardPage() {
               </Stack>
 
               <Stack spacing={1.5}>
-                {MOCK_CLUSTER_HEALTH.map((cluster) => (
-                  <ClusterHealthCard key={cluster.clusterId} cluster={cluster} />
-                ))}
+                {clusterHealthData.length > 0 ? (
+                  clusterHealthData.map((cluster) => (
+                    <ClusterHealthCard key={cluster.clusterId} cluster={cluster} />
+                  ))
+                ) : (
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ textAlign: 'center', py: 2 }}
+                  >
+                    No clusters found.
+                  </Typography>
+                )}
               </Stack>
 
               {/* Overall health summary */}
@@ -1325,7 +1583,7 @@ export default function DashboardPage() {
                     variant="h5"
                     sx={{ fontWeight: 800, color: 'success.main' }}
                   >
-                    {MOCK_CLUSTER_HEALTH.filter((c) => c.status === 'healthy').length}
+                    {clusterHealthData.filter((c) => c.status === 'healthy').length}
                   </Typography>
                   <Typography
                     variant="caption"
@@ -1340,7 +1598,7 @@ export default function DashboardPage() {
                     variant="h5"
                     sx={{ fontWeight: 800, color: 'warning.main' }}
                   >
-                    {MOCK_CLUSTER_HEALTH.filter((c) => c.status === 'degraded').length}
+                    {clusterHealthData.filter((c) => c.status === 'degraded').length}
                   </Typography>
                   <Typography
                     variant="caption"
@@ -1352,7 +1610,7 @@ export default function DashboardPage() {
                 </Stack>
                 <Stack alignItems="center" spacing={0.5}>
                   <Typography variant="h5" sx={{ fontWeight: 800, color: 'error.main' }}>
-                    {MOCK_CLUSTER_HEALTH.filter((c) => c.status === 'unreachable').length}
+                    {clusterHealthData.filter((c) => c.status === 'unreachable').length}
                   </Typography>
                   <Typography
                     variant="caption"
@@ -1397,7 +1655,7 @@ export default function DashboardPage() {
                       variant="h4"
                       sx={{ fontWeight: 800, color: 'text.primary', mb: 0.5 }}
                     >
-                      {summary.threatCoverage.totalControls}
+                      {summary?.threatCoverage.totalControls ?? 0}
                     </Typography>
                     <Typography
                       variant="caption"
@@ -1414,7 +1672,7 @@ export default function DashboardPage() {
                       variant="h4"
                       sx={{ fontWeight: 800, color: 'success.main', mb: 0.5 }}
                     >
-                      {summary.threatCoverage.passed}
+                      {summary?.threatCoverage.passed ?? 0}
                     </Typography>
                     <Typography
                       variant="caption"
@@ -1431,7 +1689,7 @@ export default function DashboardPage() {
                       variant="h4"
                       sx={{ fontWeight: 800, color: 'error.main', mb: 0.5 }}
                     >
-                      {summary.threatCoverage.failed}
+                      {summary?.threatCoverage.failed ?? 0}
                     </Typography>
                     <Typography
                       variant="caption"
@@ -1448,7 +1706,7 @@ export default function DashboardPage() {
                       variant="h4"
                       sx={{ fontWeight: 800, color: 'text.disabled', mb: 0.5 }}
                     >
-                      {summary.threatCoverage.untested}
+                      {summary?.threatCoverage.untested ?? 0}
                     </Typography>
                     <Typography
                       variant="caption"
@@ -1476,12 +1734,12 @@ export default function DashboardPage() {
                     fontWeight={600}
                     sx={{ fontSize: '0.6875rem' }}
                   >
-                    {summary.threatCoverage.coverage.toFixed(1)}%
+                    {summary?.threatCoverage.coverage.toFixed(1) ?? '0.0'}%
                   </Typography>
                 </Stack>
                 <LinearProgress
                   variant="determinate"
-                  value={summary.threatCoverage.coverage}
+                  value={summary?.threatCoverage.coverage ?? 0}
                   sx={{
                     height: 8,
                     borderRadius: 4,

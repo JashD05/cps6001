@@ -10,39 +10,31 @@
  *  4. Status badge renders different states
  */
 
-import React from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
-import '@testing-library/jest-dom';
-import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { Provider } from 'react-redux';
+import { ThemeProvider, StyledEngineProvider } from '@mui/material';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { configureStore } from '@reduxjs/toolkit';
+import '@testing-library/jest-dom';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { type PropsWithChildren } from 'react';
+import { Provider } from 'react-redux';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import StatusBadge from '@/components/StatusBadge';
+import CreateExperimentPage from '@/pages/CreateExperimentPage';
+import ExperimentDetailPage from '@/pages/ExperimentDetailPage';
+import ExperimentListPage from '@/pages/ExperimentListPage';
+import {
+  clustersAPI,
+  experimentsAPI,
+  getAccessToken,
+  templatesAPI,
+} from '@/services/api';
 import authReducer from '@/store/authSlice';
 import experimentReducer from '@/store/experimentSlice';
-import {
-  authAPI,
-  experimentsAPI,
-  templatesAPI,
-  clustersAPI,
-  dashboardAPI,
-  reportsAPI,
-  siemAPI,
-  getAccessToken,
-  getRefreshToken,
-  setTokens,
-  clearTokens,
-  getErrorMessage,
-} from '@/services/api';
-import ExperimentListPage from '@/pages/ExperimentListPage';
-import ExperimentDetailPage from '@/pages/ExperimentDetailPage';
-import CreateExperimentPage from '@/pages/CreateExperimentPage';
-import StatusBadge from '@/components/StatusBadge';
-import type { Experiment } from '@/types';
+import { lightTheme } from '@/theme';
 import type { ExperimentState } from '@/store/experimentSlice';
-import lightTheme from '@/theme';
-import { ThemeProvider, StyledEngineProvider } from '@mui/material';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import type { Experiment } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Mocks – API module
@@ -132,7 +124,7 @@ const mockedGetAccessToken = getAccessToken as jest.MockedFunction<typeof getAcc
 // ---------------------------------------------------------------------------
 
 jest.mock('@/services/toast', () => ({
-  ToastProvider: (props: React.PropsWithChildren) => props.children,
+  ToastProvider: (props: PropsWithChildren) => props.children,
   useToast: () => ({
     toasts: [],
     showToast: jest.fn(() => 'mock-toast-id'),
@@ -565,7 +557,7 @@ describe('Experiment Flow Integration', () => {
 
     it('shows a loading state while fetching experiments', async () => {
       // Create a promise that does not resolve immediately
-      let resolveList: (value: any) => void;
+      let resolveList: ((value: any) => void) | undefined;
       const listPromise = new Promise((resolve) => {
         resolveList = resolve;
       });
@@ -582,7 +574,10 @@ describe('Experiment Flow Integration', () => {
       expect(screen.queryByText('Pod Kill Test')).not.toBeInTheDocument();
 
       // Eventually resolve to complete loading
-      resolveList!({
+      if (!resolveList) {
+        throw new Error('List resolver was not initialized');
+      }
+      resolveList({
         data: {
           success: true,
           data: allMockExperiments,
@@ -930,7 +925,7 @@ describe('Experiment Flow Integration', () => {
 
     it('shows a loading state while fetching experiment details', async () => {
       // Delay the response
-      let resolveDetail: (value: any) => void;
+      let resolveDetail: ((value: any) => void) | undefined;
       const detailPromise = new Promise((resolve) => {
         resolveDetail = resolve;
       });
@@ -945,7 +940,10 @@ describe('Experiment Flow Integration', () => {
       ).not.toBeInTheDocument();
 
       // Now resolve
-      resolveDetail!({ data: { success: true, data: mockExperimentDetail } });
+      if (!resolveDetail) {
+        throw new Error('Detail resolver was not initialized');
+      }
+      resolveDetail({ data: { success: true, data: mockExperimentDetail } });
 
       await waitFor(() => {
         expect(

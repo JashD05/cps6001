@@ -474,16 +474,125 @@ type APIResponse struct {
 }
 
 // DashboardSummary represents aggregated dashboard data.
+// DashboardSummary is the comprehensive dashboard summary response
+// matching the frontend's DashboardSummary type with camelCase JSON tags.
 type DashboardSummary struct {
-	TotalExperiments  int64                  `json:"total_experiments"`
-	ActiveExperiments int64                  `json:"active_experiments"`
-	TotalRuns         int64                  `json:"total_runs"`
-	RunsLast24h       int64                  `json:"runs_last_24h"`
-	PassRate          float64                `json:"pass_rate"`
-	RecentRuns        []ExperimentRunSummary `json:"recent_runs"`
+	SecurityPostureScore     float64                  `json:"securityPostureScore"`
+	PostureTrend             PostureTrendData         `json:"postureTrend"`
+	ExperimentSummary        ExperimentSummaryData    `json:"experimentSummary"`
+	RecentExperiments        []RecentExperimentItem   `json:"recentExperiments"`
+	ClusterHealth            []ClusterHealthItem      `json:"clusterHealth"`
+	ThreatCoverage           ThreatCoverageData       `json:"threatCoverage"`
+	ThreatCoverageByCategory []ThreatCoverageCategory `json:"threatCoverageByCategory"`
+	ExperimentTrend          []ActivityTimelinePoint  `json:"experimentTrend"`
+	TopAttackTypes           []AttackTypePoint        `json:"topAttackTypes"`
+	ValidationSuccessRate    []TrendDataPoint         `json:"validationSuccessRate"`
 }
 
-// ExperimentRunSummary is a lightweight summary for dashboard display.
+// PostureTrendData represents the trend direction and magnitude for security posture.
+type PostureTrendData struct {
+	Direction  string  `json:"direction"`
+	Percentage float64 `json:"percentage"`
+	Period     string  `json:"period"`
+}
+
+// ExperimentSummaryData holds experiment count breakdowns by status.
+type ExperimentSummaryData struct {
+	Total     int64 `json:"total"`
+	Running   int64 `json:"running"`
+	Completed int64 `json:"completed"`
+	Failed    int64 `json:"failed"`
+	Pending   int64 `json:"pending"`
+}
+
+// RecentExperimentItem is a lightweight experiment summary for the dashboard.
+type RecentExperimentItem struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Description  string     `json:"description"`
+	Status       string     `json:"status"`
+	TemplateName string     `json:"templateName"`
+	ClusterName  string     `json:"clusterName"`
+	CreatedBy    string     `json:"createdBy"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	StartedAt    *time.Time `json:"startedAt"`
+	CompletedAt  *time.Time `json:"completedAt"`
+}
+
+// ClusterHealthItem represents health metrics for a single cluster.
+type ClusterHealthItem struct {
+	ClusterID   string  `json:"clusterId"`
+	Status      string  `json:"status"`
+	CPUUsage    float64 `json:"cpuUsage"`
+	MemoryUsage float64 `json:"memoryUsage"`
+	PodCount    int64   `json:"podCount"`
+	NodeCount   int64   `json:"nodeCount"`
+	ErrorRate   float64 `json:"errorRate"`
+	LastChecked string  `json:"lastChecked"`
+}
+
+// ThreatCoverageData represents aggregate threat coverage metrics.
+type ThreatCoverageData struct {
+	TotalControls int64   `json:"totalControls"`
+	Validated     int64   `json:"validated"`
+	Passed        int64   `json:"passed"`
+	Failed        int64   `json:"failed"`
+	Untested      int64   `json:"untested"`
+	Coverage      float64 `json:"coverage"`
+}
+
+// ThreatCoverageCategory represents per-category threat coverage for bar charts.
+type ThreatCoverageCategory struct {
+	Name      string `json:"name"`
+	Validated int64  `json:"validated"`
+	Untested  int64  `json:"untested"`
+}
+
+// ActivityTimelinePoint represents a single data point in the activity timeline.
+type ActivityTimelinePoint struct {
+	Date   string `json:"date"`
+	Total  int64  `json:"total"`
+	Passed int64  `json:"passed"`
+	Failed int64  `json:"failed"`
+}
+
+// TrendDataPoint represents a single point in a time-series trend.
+type TrendDataPoint struct {
+	Timestamp string  `json:"timestamp"`
+	Value     float64 `json:"value"`
+	Label     string  `json:"label,omitempty"`
+}
+
+// AttackTypePoint represents a named value in the top attack types chart.
+type AttackTypePoint struct {
+	Name  string `json:"name"`
+	Value int64  `json:"value"`
+	Color string `json:"color,omitempty"`
+}
+
+// SecurityPostureResponse is the response for the /dashboard/security-posture endpoint.
+type SecurityPostureResponse struct {
+	Score   float64                       `json:"score"`
+	Trend   float64                       `json:"trend"`
+	History []SecurityPostureHistoryPoint `json:"history"`
+}
+
+// SecurityPostureHistoryPoint represents a monthly security posture score.
+type SecurityPostureHistoryPoint struct {
+	Date  string  `json:"date"`
+	Score float64 `json:"score"`
+}
+
+// DashboardMetricsResponse is the response for the /dashboard/metrics endpoint.
+type DashboardMetricsResponse struct {
+	ExperimentsPerDay float64 `json:"experimentsPerDay"`
+	AvgDuration       float64 `json:"avgDuration"`
+	SuccessRate       float64 `json:"successRate"`
+	ActiveUsers       int64   `json:"activeUsers"`
+}
+
+// ExperimentRunSummary is kept for backward compatibility; it was previously
+// used in DashboardSummary and may still be referenced elsewhere.
 type ExperimentRunSummary struct {
 	ID           uuid.UUID  `json:"id"`
 	ExperimentID uuid.UUID  `json:"experiment_id"`
@@ -509,6 +618,7 @@ type Report struct {
 	ErrorMessage   *string        `json:"error_message" gorm:"type:text"`
 	DownloadURL    *string        `json:"download_url" gorm:"type:varchar(500)"`
 	FileSize       *int64         `json:"file_size" gorm:"type:bigint"`
+	Content        []byte         `json:"-" gorm:"type:bytea"`
 	GeneratedBy    uuid.UUID      `json:"generated_by" gorm:"type:uuid;not null"`
 	CreatedAt      time.Time      `json:"created_at" gorm:"not null;default:now()"`
 	UpdatedAt      time.Time      `json:"updated_at" gorm:"not null;default:now()"`

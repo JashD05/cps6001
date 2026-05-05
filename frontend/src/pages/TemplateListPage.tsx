@@ -1,5 +1,21 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import {
+  Search as SearchIcon,
+  Add as AddIcon,
+  Clear as ClearIcon,
+  Science as TemplateIcon,
+  Security as SecurityIcon,
+  NetworkCheck as NetworkIcon,
+  Apps as AppIcon,
+  Storage as InfraIcon,
+  Dataset as DataIcon,
+  Person as IdentityIcon,
+  Build as CustomIcon,
+  Verified as VerifiedIcon,
+  TrendingUp as TrendingUpIcon,
+  Download as DownloadIcon,
+  GridView as GridViewIcon,
+  ViewList as ViewListViewIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -28,31 +44,11 @@ import {
   Alert,
   type SelectChangeEvent,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  Add as AddIcon,
-  FilterList as FilterIcon,
-  Refresh as RefreshIcon,
-  Clear as ClearIcon,
-  Science as TemplateIcon,
-  Security as SecurityIcon,
-  NetworkCheck as NetworkIcon,
-  Apps as AppIcon,
-  Storage as InfraIcon,
-  Dataset as DataIcon,
-  Person as IdentityIcon,
-  Build as CustomIcon,
-  Verified as VerifiedIcon,
-  TrendingUp as TrendingUpIcon,
-  Download as DownloadIcon,
-  Star as StarIcon,
-  GridView as GridViewIcon,
-  ViewList as ViewListViewIcon,
-  Sort as SortIcon,
-} from '@mui/icons-material';
-import { useAppDispatch } from '@/store';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+
 import { templatesAPI, getErrorMessage } from '@/services/api';
-import StatusBadge from '@/components/StatusBadge';
+
 import type {
   AttackTemplate,
   TemplateCategory,
@@ -1123,7 +1119,6 @@ function TemplateCardSkeleton() {
 
 const TemplateListPage: React.FC = () => {
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
 
   // -----------------------------------------------------------------------
   // State

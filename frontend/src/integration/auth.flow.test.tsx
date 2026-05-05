@@ -11,40 +11,31 @@
  *  5. Session expired → redirect to login with expired=true
  */
 
-import React, { useEffect } from 'react';
-import { render, screen, waitFor, act } from '@testing-library/react';
-import '@testing-library/jest-dom';
-import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
-import { Provider, useSelector, useDispatch } from 'react-redux';
+import { ThemeProvider, StyledEngineProvider } from '@mui/material';
 import { configureStore } from '@reduxjs/toolkit';
+import '@testing-library/jest-dom';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useEffect, type PropsWithChildren } from 'react';
+import { Provider, useSelector, useDispatch } from 'react-redux';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import LoginPage from '@/pages/LoginPage';
-import authReducer, {
-  login,
-  logout,
-  refreshToken,
-  clearAuth,
-  selectIsAuthenticated,
-} from '@/store/authSlice';
-import experimentReducer from '@/store/experimentSlice';
 import {
   authAPI,
   getAccessToken,
   getRefreshToken,
   setTokens,
   clearTokens,
-  getErrorMessage,
-  experimentsAPI,
-  templatesAPI,
-  clustersAPI,
-  dashboardAPI,
-  reportsAPI,
-  siemAPI,
 } from '@/services/api';
-import type { LoginResponse, User, AuthState } from '@/types';
+import authReducer, {
+  logout,
+  refreshToken,
+  selectIsAuthenticated,
+} from '@/store/authSlice';
+import experimentReducer from '@/store/experimentSlice';
+import { lightTheme } from '@/theme';
 import type { AppDispatch } from '@/store';
-import lightTheme from '@/theme';
-import { ThemeProvider, StyledEngineProvider } from '@mui/material';
+import type { LoginResponse, User, AuthState } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Mocks – API module
@@ -137,7 +128,7 @@ const mockedClearTokens = clearTokens as jest.MockedFunction<typeof clearTokens>
 // ---------------------------------------------------------------------------
 
 jest.mock('@/services/toast', () => ({
-  ToastProvider: (props: React.PropsWithChildren) => props.children,
+  ToastProvider: (props: PropsWithChildren) => props.children,
   useToast: () => ({
     toasts: [],
     showToast: jest.fn(() => 'mock-toast-id'),
@@ -418,7 +409,7 @@ describe('Auth Flow Integration', () => {
       } as any);
 
       // Start at /login with a redirect query param pointing to /
-      const { store, user } = renderLoginPage('/login?redirect=%2F');
+      const { user } = renderLoginPage('/login?redirect=%2F');
 
       await user.type(screen.getByLabelText(/email address/i), 'admin@chaos-sec.io');
       await user.type(screen.getByLabelText(/^password$/i), 'SecureP@ss1');

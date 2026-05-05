@@ -1,15 +1,14 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
+import CssBaseline from '@mui/material/CssBaseline';
+import { ThemeProvider, StyledEngineProvider } from '@mui/material/styles';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { Provider } from 'react-redux';
 import { BrowserRouter } from 'react-router-dom';
-import { ThemeProvider, StyledEngineProvider } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-
 import App from '@/App';
 import { store } from '@/store';
-import lightTheme from '@/theme';
+import { lightTheme } from '@/theme';
 
 // ---------------------------------------------------------------------------
 // Keep stored auth tokens so users stay signed in across page refreshes.
@@ -38,10 +37,10 @@ if (!rootElement) {
   );
 }
 
-const root = ReactDOM.createRoot(rootElement);
+const root = createRoot(rootElement);
 
 root.render(
-  <React.StrictMode>
+  <StrictMode>
     <Provider store={store}>
       <StyledEngineProvider injectFirst>
         <ThemeProvider theme={lightTheme}>
@@ -54,7 +53,7 @@ root.render(
         </ThemeProvider>
       </StyledEngineProvider>
     </Provider>
-  </React.StrictMode>,
+  </StrictMode>,
 );
 
 // ---------------------------------------------------------------------------
@@ -64,6 +63,7 @@ root.render(
 if (import.meta.env.DEV && import.meta.env.VITE_MEASURE_PERF === 'true') {
   import('react-dom/client').then(() => {
     const t = performance.now();
+    // eslint-disable-next-line no-console
     console.info(`[Chaos-Sec] App rendered in ${Math.round(t)}ms`);
   });
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/chaos-sec/backend/internal/kubernetes"
 	"github.com/chaos-sec/backend/internal/models"
+	"github.com/chaos-sec/backend/internal/notification"
 	"github.com/chaos-sec/backend/internal/siem"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -63,6 +64,10 @@ type Engine struct {
 	k8sManager    *kubernetes.ClientManager
 	siemValidator *siem.Validator
 	logger        *zap.Logger
+	// notificationSvc sends notifications through email, Slack, and webhook
+	// channels. It is optional; when nil, only Redis Pub/Sub notifications
+	// are published.
+	notificationSvc *notification.Service
 	// cancelFuncs tracks running experiments by runID, allowing StopExperiment
 	// to cancel the context of a running experiment for prompt termination.
 	cancelFuncs sync.Map // map[uuid.UUID]context.CancelFunc
@@ -70,6 +75,18 @@ type Engine struct {
 	clusterClient *kubernetes.ClusterClient
 	podCtrl       *kubernetes.PodController
 	nsMgr         *kubernetes.NamespaceManager
+}
+
+// EngineOption is a functional option for configuring an Engine.
+type EngineOption func(*Engine)
+
+// WithNotificationService sets the notification service on the Engine.
+// This is optional; existing callers that do not pass this option will
+// continue to work with Redis Pub/Sub notifications only.
+func WithNotificationService(svc *notification.Service) EngineOption {
+	return func(e *Engine) {
+		e.notificationSvc = svc
+	}
 }
 
 // NewEngine creates a new experiment Engine with the provided dependencies.
@@ -81,14 +98,19 @@ func NewEngine(
 	k8sManager *kubernetes.ClientManager,
 	siemValidator *siem.Validator,
 	logger *zap.Logger,
+	opts ...EngineOption,
 ) *Engine {
-	return &Engine{
+	eng := &Engine{
 		db:            db,
 		rdb:           rdb,
 		k8sManager:    k8sManager,
 		siemValidator: siemValidator,
 		logger:        logger.Named("experiment_engine"),
 	}
+	for _, opt := range opts {
+		opt(eng)
+	}
+	return eng
 }
 
 // initForCluster initializes the per-cluster controllers for the given cluster ID.
@@ -582,7 +604,11 @@ func (e *Engine) executeStep(
 		pod, deployErr := podCtrl.CreateAttackerPod(ctx, podConfig)
 		if deployErr != nil {
 			// Cleanup namespace on deployment failure.
-			_ = e.nsMgr.DeleteNamespace(ctx, nsName)
+			// Use the local nsMgr parameter, not e.nsMgr, to avoid a nil-pointer
+			// panic in dry-run mode and a data race in concurrent execution.
+			if nsMgr != nil {
+				_ = nsMgr.DeleteNamespace(ctx, nsName)
+			}
 			return attackPods, testResults, siemValidations,
 				fmt.Errorf("failed to deploy attacker pod: %w", deployErr)
 		}
@@ -1478,24 +1504,82 @@ func (e *Engine) cleanupAllSteps(
 // sendNotifications publishes a notification event to Redis for downstream
 // consumers (e.g., email, Slack webhooks).
 func (e *Engine) sendNotifications(ctx context.Context, run *models.ExperimentRun, summary json.RawMessage) {
-	if e.rdb == nil {
-		return
+	// Always publish to Redis Pub/Sub for real-time WebSocket subscribers.
+	if e.rdb != nil {
+		notificationData, _ := json.Marshal(map[string]interface{}{
+			"run_id":         run.ID.String(),
+			"experiment_id":  run.ExperimentID.String(),
+			"status":         run.Status,
+			"result_summary": summary,
+			"timestamp":      time.Now(),
+		})
+
+		channel := "experiment:notifications"
+		if err := e.rdb.Publish(ctx, channel, notificationData).Err(); err != nil {
+			e.logger.Warn("failed to publish notification event",
+				zap.String("run_id", run.ID.String()),
+				zap.Error(err),
+			)
+		}
 	}
 
-	notificationData, _ := json.Marshal(map[string]interface{}{
-		"run_id":         run.ID.String(),
-		"experiment_id":  run.ExperimentID.String(),
-		"status":         run.Status,
-		"result_summary": summary,
-		"timestamp":      time.Now(),
-	})
+	// Send through the notification service (email, Slack, webhook) when configured.
+	if e.notificationSvc != nil {
+		// Determine event type from run status.
+		eventType := "experiment_" + run.Status // e.g. experiment_completed, experiment_failed
+		if run.Status == StatusRunning {
+			eventType = "experiment_started"
+		}
 
-	channel := "experiment:notifications"
-	if err := e.rdb.Publish(ctx, channel, notificationData).Err(); err != nil {
-		e.logger.Warn("failed to publish notification event",
-			zap.String("run_id", run.ID.String()),
-			zap.Error(err),
-		)
+		// Build a human-readable title and message.
+		title := fmt.Sprintf("Experiment %s", run.Status)
+		message := fmt.Sprintf("Experiment run %s is now %s.", run.ID.String(), run.Status)
+
+		// Parse the result summary for the NotificationEvent.
+		var summaryObj *models.RunResultSummary
+		if summary != nil {
+			var parsed models.RunResultSummary
+			if err := json.Unmarshal(summary, &parsed); err == nil {
+				summaryObj = &parsed
+			}
+		}
+
+		// Collect any errors from the run.
+		var errs []string
+		if run.Status == StatusFailed && run.ErrorMessage != nil && *run.ErrorMessage != "" {
+			errs = []string{*run.ErrorMessage}
+		}
+
+		event := notification.NotificationEvent{
+			Type:    eventType,
+			Title:   title,
+			Message: message,
+			RunID:   run.ID.String(),
+			ExpID:   run.ExperimentID.String(),
+			Status:  run.Status,
+			Summary: summaryObj,
+			Errors:  errs,
+			Metadata: map[string]interface{}{
+				"started_at":   run.StartedAt,
+				"completed_at": run.CompletedAt,
+			},
+		}
+
+		results := e.notificationSvc.SendNotification(ctx, event)
+		for _, r := range results {
+			if r.Success {
+				e.logger.Debug("notification sent",
+					zap.String("channel", r.Channel),
+					zap.String("run_id", run.ID.String()),
+				)
+			} else {
+				e.logger.Warn("notification failed",
+					zap.String("channel", r.Channel),
+					zap.String("run_id", run.ID.String()),
+					zap.String("error", r.Error),
+				)
+			}
+		}
 	}
 }
 

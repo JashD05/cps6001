@@ -1,33 +1,33 @@
-import React, { Suspense, type ReactNode, useEffect } from 'react';
-import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress, Typography } from '@mui/material';
+import { Suspense, lazy, type FC, type ReactNode, useEffect } from 'react';
+import { useDispatch } from 'react-redux';
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { ToastProvider } from '@/services/toast';
-import { useDispatch } from 'react-redux';
-import { clearAuth } from '@/store/authSlice';
 import { resetStore, type AppDispatch } from '@/store';
+import { clearAuth } from '@/store/authSlice';
 
 // ---------------------------------------------------------------------------
 // Lazy-loaded page components for code splitting
 // ---------------------------------------------------------------------------
 
-const DashboardPage = React.lazy(() => import('@/pages/DashboardPage'));
-const ExperimentListPage = React.lazy(() => import('@/pages/ExperimentListPage'));
-const CreateExperimentPage = React.lazy(() => import('@/pages/CreateExperimentPage'));
-const ExperimentDetailPage = React.lazy(() => import('@/pages/ExperimentDetailPage'));
-const ClusterListPage = React.lazy(() => import('@/pages/ClusterListPage'));
-const TemplateListPage = React.lazy(() => import('@/pages/TemplateListPage'));
-const ReportsPage = React.lazy(() => import('@/pages/ReportsPage'));
-const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'));
-const LoginPage = React.lazy(() => import('@/pages/LoginPage'));
-const RegisterPage = React.lazy(() => import('@/pages/RegisterPage'));
+const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
+const ExperimentListPage = lazy(() => import('@/pages/ExperimentListPage'));
+const CreateExperimentPage = lazy(() => import('@/pages/CreateExperimentPage'));
+const ExperimentDetailPage = lazy(() => import('@/pages/ExperimentDetailPage'));
+const ClusterListPage = lazy(() => import('@/pages/ClusterListPage'));
+const TemplateListPage = lazy(() => import('@/pages/TemplateListPage'));
+const ReportsPage = lazy(() => import('@/pages/ReportsPage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
+const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const RegisterPage = lazy(() => import('@/pages/RegisterPage'));
 
 // ---------------------------------------------------------------------------
 // Loading Fallback
 // ---------------------------------------------------------------------------
 
-const PageLoader: React.FC = () => (
+const PageLoader: FC = () => (
   <Box
     sx={{
       display: 'flex',
@@ -50,7 +50,7 @@ const PageLoader: React.FC = () => (
 // Suspense Wrapper for Lazy Pages
 // ---------------------------------------------------------------------------
 
-const LazyPage: React.FC<{ children: ReactNode }> = ({ children }) => (
+const LazyPage: FC<{ children: ReactNode }> = ({ children }) => (
   <Suspense fallback={<PageLoader />}>{children}</Suspense>
 );
 
@@ -58,7 +58,7 @@ const LazyPage: React.FC<{ children: ReactNode }> = ({ children }) => (
 // Auth session watcher
 // ---------------------------------------------------------------------------
 
-const AuthSessionWatcher: React.FC = () => {
+const AuthSessionWatcher: FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -92,7 +92,7 @@ const AuthSessionWatcher: React.FC = () => {
 // App Component
 // ---------------------------------------------------------------------------
 
-const App: React.FC = () => {
+const App: FC = () => {
   return (
     <ToastProvider defaultPosition="bottom-right" maxToasts={5}>
       <AuthSessionWatcher />

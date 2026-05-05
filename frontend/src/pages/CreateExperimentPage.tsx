@@ -1,4 +1,20 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import {
+  Science as TemplateIcon,
+  Settings as ConfigIcon,
+  Security as ValidationIcon,
+  FactCheck as ReviewIcon,
+  NavigateNext as NextIcon,
+  NavigateBefore as BackIcon,
+  RocketLaunch as CreateIcon,
+  Dns as ClusterIcon,
+  Cloud as NamespaceIcon,
+  Add as AddIcon,
+  CheckCircle as CheckIcon,
+  Search as SearchIcon,
+  Clear as ClearIcon,
+  Warning as WarningIcon,
+  Shield as ShieldIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -7,11 +23,9 @@ import {
   Stepper,
   Step,
   StepLabel,
-  StepContent,
   Grid,
   Card,
   CardContent,
-  CardActionArea,
   Stack,
   TextField,
   MenuItem,
@@ -29,7 +43,6 @@ import {
   Avatar,
   InputAdornment,
   IconButton,
-  Tooltip,
   Table,
   TableBody,
   TableCell,
@@ -38,52 +51,31 @@ import {
   TableRow,
   useTheme,
   useMediaQuery,
-  type SelectChangeEvent,
 } from '@mui/material';
-import {
-  Science as TemplateIcon,
-  Settings as ConfigIcon,
-  Security as ValidationIcon,
-  FactCheck as ReviewIcon,
-  NavigateNext as NextIcon,
-  NavigateBefore as BackIcon,
-  RocketLaunch as CreateIcon,
-  Dns as ClusterIcon,
-  Cloud as NamespaceIcon,
-  Timer as TimerIcon,
-  Add as AddIcon,
-  CheckCircle as CheckIcon,
-  Error as ErrorIcon,
-  Search as SearchIcon,
-  Clear as ClearIcon,
-  Info as InfoIcon,
-  Warning as WarningIcon,
-  Shield as ShieldIcon,
-} from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import type { AppDispatch, RootState } from '@/store';
-import {
-  createExperiment,
-  selectCreateStatus,
-  selectCreateError,
-  resetCreateStatus,
-} from '@/store/experimentSlice';
+import { useNavigate } from 'react-router-dom';
+import StatusBadge from '@/components/StatusBadge';
+import { MOCK_CLUSTERS } from '@/data/mockClusters';
 import {
   clustersAPI,
   templatesAPI,
   experimentsAPI,
   getErrorMessage,
 } from '@/services/api';
-import { MOCK_CLUSTERS } from '@/data/mockClusters';
-import StatusBadge from '@/components/StatusBadge';
+import {
+  createExperiment,
+  selectCreateStatus,
+  selectCreateError,
+  resetCreateStatus,
+} from '@/store/experimentSlice';
+import type { AppDispatch } from '@/store';
 import type {
   AttackTemplate,
   TemplateParameter,
   TemplateCategory,
   TemplateSeverity,
   CreateExperimentRequest,
-  ValidationSettings,
   Cluster,
 } from '@/types';
 

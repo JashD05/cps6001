@@ -1,4 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Visibility,
+  VisibilityOff,
+  Login as LoginIcon,
+  Security,
+  VpnKey,
+} from '@mui/icons-material';
 import {
   Box,
   Button,
@@ -19,13 +25,7 @@ import {
   useTheme,
   useMediaQuery,
 } from '@mui/material';
-import {
-  Visibility,
-  VisibilityOff,
-  Login as LoginIcon,
-  Security,
-  VpnKey,
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { RootState, AppDispatch } from '@/store';
@@ -33,7 +33,7 @@ import { login, clearAuth, clearError } from '@/store/authSlice';
 
 const LoginPage: React.FC = () => {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const _isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();

@@ -1,4 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Visibility,
+  VisibilityOff,
+  PersonAdd,
+  Security,
+  VpnKey,
+  Email,
+  Badge,
+  Business,
+  CheckCircle,
+} from '@mui/icons-material';
 import {
   Box,
   Button,
@@ -22,19 +32,9 @@ import {
   useTheme,
   useMediaQuery,
 } from '@mui/material';
-import {
-  Visibility,
-  VisibilityOff,
-  PersonAdd,
-  Security,
-  VpnKey,
-  Email,
-  Badge,
-  Business,
-  CheckCircle,
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { RootState, AppDispatch } from '@/store';
 import { clearAuth, register } from '@/store/authSlice';
 
@@ -61,7 +61,6 @@ const RegisterPage: React.FC = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
 
   const { isLoading, error } = useSelector((state: RootState) => state.auth);
 

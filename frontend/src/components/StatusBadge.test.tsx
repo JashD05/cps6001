@@ -10,8 +10,8 @@
  *  6. Helper functions (getStatusColor, getStatusConfig)
  */
 
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
+import React from 'react';
 import '@testing-library/jest-dom';
 import StatusBadge, {
   getStatusColor,
@@ -49,7 +49,7 @@ describe('StatusBadge – variants', () => {
   });
 
   it('renders the dot variant without a Chip', () => {
-    const { container } = renderBadge({ status: 'running', variant: 'dot' });
+    const { container: _container } = renderBadge({ status: 'running', variant: 'dot' });
     expect(document.querySelector('.MuiChip-root')).not.toBeInTheDocument();
     expect(screen.getByText('Running')).toBeInTheDocument();
   });

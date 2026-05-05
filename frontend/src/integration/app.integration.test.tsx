@@ -9,27 +9,19 @@
  *  5. Catch-all / unknown route handling
  */
 
-import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import '@testing-library/jest-dom';
-import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
-import { Provider } from 'react-redux';
+import { ThemeProvider } from '@mui/material/styles';
 import { configureStore } from '@reduxjs/toolkit';
+import '@testing-library/jest-dom';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { Provider } from 'react-redux';
+import { MemoryRouter } from 'react-router-dom';
 import App from '@/App';
+import { getAccessToken, getRefreshToken } from '@/services/api';
 import authReducer from '@/store/authSlice';
 import experimentReducer from '@/store/experimentSlice';
-import {
-  authAPI,
-  getAccessToken,
-  getRefreshToken,
-  setTokens,
-  clearTokens,
-  getErrorMessage,
-} from '@/services/api';
+import { lightTheme } from '@/theme';
 import type { AuthState } from '@/types';
-import lightTheme from '@/theme';
-import { ThemeProvider } from '@mui/material/styles';
 
 // ---------------------------------------------------------------------------
 // Mocks – API module
@@ -289,7 +281,6 @@ jest.mock('@/components/Layout', () => {
 // ---------------------------------------------------------------------------
 
 jest.mock('@/services/toast', () => {
-  const React = require('react');
   return {
     ToastProvider: (props: any) => props.children,
     useToast: () => ({

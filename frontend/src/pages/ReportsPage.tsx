@@ -1,4 +1,27 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Assessment as ReportIcon,
+  Add as GenerateIcon,
+  Download as DownloadIcon,
+  Delete as DeleteIcon,
+  Refresh as RefreshIcon,
+  Search as SearchIcon,
+  Clear as ClearIcon,
+  Description as FileIcon,
+  PictureAsPdf as PdfIcon,
+  TableChart as CsvIcon,
+  DataObject as JsonIcon,
+  Language as HtmlIcon,
+  Share as ShareIcon,
+  CheckCircle as ReadyIcon,
+  Error as ErrorIcon,
+  HourglassEmpty as GeneratingIcon,
+  DateRange as DateRangeIcon,
+  TrendingUp as TrendIcon,
+  Security as SecurityIcon,
+  Science as ExperimentIcon,
+  BarChart as ComplianceIcon,
+  Speed as ExecutiveIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -29,52 +52,18 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  FormControlLabel,
-  Checkbox,
-  Divider,
   Skeleton,
   Alert,
-  Breadcrumbs,
-  Link,
   Avatar,
-  LinearProgress,
   useTheme,
-  type SelectChangeEvent,
 } from '@mui/material';
-import {
-  Assessment as ReportIcon,
-  Add as GenerateIcon,
-  Download as DownloadIcon,
-  Delete as DeleteIcon,
-  Refresh as RefreshIcon,
-  Search as SearchIcon,
-  FilterList as FilterIcon,
-  Clear as ClearIcon,
-  Description as FileIcon,
-  PictureAsPdf as PdfIcon,
-  TableChart as CsvIcon,
-  DataObject as JsonIcon,
-  Language as HtmlIcon,
-  Schedule as ScheduleIcon,
-  Share as ShareIcon,
-  MoreVert as MoreIcon,
-  CheckCircle as ReadyIcon,
-  Error as ErrorIcon,
-  HourglassEmpty as GeneratingIcon,
-  Visibility as ViewIcon,
-  DateRange as DateRangeIcon,
-  TrendingUp as TrendIcon,
-  Security as SecurityIcon,
-  Science as ExperimentIcon,
-  BarChart as ComplianceIcon,
-  Speed as ExecutiveIcon,
-} from '@mui/icons-material';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { reportsAPI, experimentsAPI, getErrorMessage } from '@/services/api';
-import { useAppDispatch, useAppSelector } from '@/store';
 import StatusBadge from '@/components/StatusBadge';
-import type { Experiment, Report, ReportType, ReportFormat } from '@/types';
+import { reportsAPI, experimentsAPI, getErrorMessage } from '@/services/api';
+
 import { normalizeReport } from '@/types';
+import type { Experiment, Report, ReportType, ReportFormat } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -928,8 +917,8 @@ const TableSkeleton: React.FC<{ rows?: number }> = ({ rows = 5 }) => (
 // ---------------------------------------------------------------------------
 
 const ReportsPage: React.FC = () => {
-  const theme = useTheme();
-  const navigate = useNavigate();
+  const _theme = useTheme();
+  const _navigate = useNavigate();
 
   // -----------------------------------------------------------------------
   // State

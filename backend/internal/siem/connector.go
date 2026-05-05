@@ -147,7 +147,7 @@ func DefaultSIEMConfig(cfg SIEMConfig) SIEMConfig {
 }
 
 // NewSIEMConnector creates a new SIEMConnector based on the provider name.
-// Supported providers: "mock" (returns MockSIEM).
+// Supported providers: "mock", "elasticsearch", "splunk".
 // For any unrecognised provider, an error is returned.
 func NewSIEMConnector(provider string, cfg SIEMConfig) (SIEMConnector, error) {
 	cfg = DefaultSIEMConfig(cfg)
@@ -159,9 +159,13 @@ func NewSIEMConnector(provider string, cfg SIEMConfig) (SIEMConnector, error) {
 	switch provider {
 	case "mock":
 		return NewMockSIEM(cfg), nil
+	case "elasticsearch":
+		return NewElasticsearchSIEM(cfg), nil
+	case "splunk":
+		return NewSplunkSIEM(cfg), nil
 	case "":
 		return nil, fmt.Errorf("SIEM provider must be specified; use \"mock\" for testing")
 	default:
-		return nil, fmt.Errorf("unsupported siem provider: %q (supported: mock)", provider)
+		return nil, fmt.Errorf("unsupported siem provider: %q (supported: mock, elasticsearch, splunk)", provider)
 	}
 }

@@ -372,7 +372,8 @@ export interface DashboardSummary {
   recentExperiments: Experiment[];
   clusterHealth: ClusterHealth[];
   threatCoverage: ThreatCoverageData;
-  experimentTrend: TimeSeriesData[];
+  threatCoverageByCategory: ThreatCoverageCategory[];
+  experimentTrend: ActivityTimelinePoint[];
   topAttackTypes: ChartDataPoint[];
   validationSuccessRate: TimeSeriesData[];
 }
@@ -402,6 +403,19 @@ export interface ThreatCoverageData {
   failed: number;
   untested: number;
   coverage: number;
+}
+
+export interface ThreatCoverageCategory {
+  name: string;
+  validated: number;
+  untested: number;
+}
+
+export interface ActivityTimelinePoint {
+  date: string;
+  total: number;
+  passed: number;
+  failed: number;
 }
 
 export interface DashboardState {

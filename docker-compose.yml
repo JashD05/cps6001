@@ -46,30 +46,6 @@ services:
       - chaos-sec-net
 
   # ──────────────────────────────────────────────
-  # RabbitMQ Message Queue
-  # ──────────────────────────────────────────────
-  rabbitmq:
-    image: rabbitmq:3.12-management-alpine
-    container_name: chaos-sec-rabbitmq
-    restart: unless-stopped
-    environment:
-      RABBITMQ_DEFAULT_USER: chaossec
-      RABBITMQ_DEFAULT_PASS: chaossec_rabbitmq_local_password
-    ports:
-      - "5672:5672" # AMQP
-      - "15672:15672" # Management UI
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    networks:
-      - chaos-sec-net
-
-  # ──────────────────────────────────────────────
   # Mock SIEM Service
   # ──────────────────────────────────────────────
   mock-siem:
@@ -152,8 +128,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       mock-siem:
         condition: service_healthy
     networks:
@@ -226,8 +200,6 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
-    driver: local
-  rabbitmq_data:
     driver: local
   mock_siem_data:
     driver: local

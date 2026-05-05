@@ -1,35 +1,3 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import {
-  Box,
-  Typography,
-  Button,
-  IconButton,
-  Chip,
-  Paper,
-  Stack,
-  Divider,
-  Tooltip,
-  LinearProgress,
-  Alert,
-  AlertTitle,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Breadcrumbs,
-  Link,
-  Collapse,
-  Skeleton,
-  List,
-  ListItem,
-  ListItemIcon,
-  ListItemText,
-  useTheme,
-  useMediaQuery,
-} from '@mui/material';
 import {
   Refresh as RefreshIcon,
   ArrowBack as BackIcon,
@@ -54,8 +22,40 @@ import {
   ExpandLess as ExpandLessIcon,
   Circle as CircleIcon,
 } from '@mui/icons-material';
+import {
+  Box,
+  Typography,
+  Button,
+  IconButton,
+  Chip,
+  Paper,
+  Stack,
+  Divider,
+  Tooltip,
+  LinearProgress,
+  Alert,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Breadcrumbs,
+  Link,
+  Collapse,
+  Skeleton,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  useTheme,
+  useMediaQuery,
+} from '@mui/material';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import type { AppDispatch } from '@/store';
+import { useParams, useNavigate } from 'react-router-dom';
+import StatusBadge from '@/components/StatusBadge';
+import { experimentsAPI } from '@/services/api';
 import {
   fetchExperimentById,
   fetchExperimentLogs,
@@ -72,8 +72,7 @@ import {
   resetExecuteStatus,
   resetStopStatus,
 } from '@/store/experimentSlice';
-import { experimentsAPI, getErrorMessage } from '@/services/api';
-import StatusBadge from '@/components/StatusBadge';
+import type { AppDispatch } from '@/store';
 import type { ExperimentStep, SIEMValidationResult, ExperimentResult } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -756,7 +755,7 @@ const ExperimentDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const dispatch = useDispatch<AppDispatch>();
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const _isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const experiment = useSelector(selectExperimentDetail);
   const isLoading = useSelector(selectExperimentDetailLoading);

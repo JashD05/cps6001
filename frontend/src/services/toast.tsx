@@ -10,16 +10,8 @@
  *  - Stacking with limit to prevent overflow
  */
 
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useState,
-  useRef,
-  useMemo,
-} from 'react';
+import { Close } from '@mui/icons-material';
 import {
-  Box,
   Snackbar,
   Alert,
   AlertTitle,
@@ -30,7 +22,14 @@ import {
   Button,
   Typography,
 } from '@mui/material';
-import { Close } from '@mui/icons-material';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useState,
+  useRef,
+  useMemo,
+} from 'react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,7 +127,7 @@ function getSlideDirection(position: ToastPosition): SlideDirection {
   return 'left';
 }
 
-const SlideTransition = React.forwardRef(function SlideTransition(
+const _SlideTransition = React.forwardRef(function SlideTransition(
   props: SlideProps & { position?: ToastPosition },
   ref: React.Ref<unknown>,
 ) {

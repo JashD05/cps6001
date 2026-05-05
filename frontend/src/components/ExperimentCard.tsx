@@ -1,4 +1,12 @@
-import React from 'react';
+import {
+  PlayArrow as PlayIcon,
+  Stop as StopIcon,
+  Visibility as ViewIcon,
+  Schedule as ScheduleIcon,
+  Timer as TimerIcon,
+  Dns as ClusterIcon,
+  Science as TemplateIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Card,
@@ -13,15 +21,7 @@ import {
   Stack,
   Divider,
 } from '@mui/material';
-import {
-  PlayArrow as PlayIcon,
-  Stop as StopIcon,
-  Visibility as ViewIcon,
-  Schedule as ScheduleIcon,
-  Timer as TimerIcon,
-  Dns as ClusterIcon,
-  Science as TemplateIcon,
-} from '@mui/icons-material';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import StatusBadge from '@/components/StatusBadge';
 import type { Experiment } from '@/types';

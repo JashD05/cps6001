@@ -14,6 +14,7 @@ import (
 	"github.com/chaos-sec/backend/internal/database"
 	"github.com/chaos-sec/backend/internal/experiment"
 	"github.com/chaos-sec/backend/internal/kubernetes"
+	"github.com/chaos-sec/backend/internal/notification"
 	"github.com/chaos-sec/backend/internal/router"
 	"github.com/chaos-sec/backend/internal/siem"
 	"github.com/chaos-sec/backend/internal/worker"
@@ -228,9 +229,42 @@ func serve(cfg *config.Config, logger *zap.Logger) error {
 	// ── Initialize Kubernetes Client Manager ─────────────────────────────
 	k8sHandler := kubernetes.NewHandler(db.DB, cfg, logger)
 
+	// ── Initialize Notification Service ──────────────────────────────────
+	var notificationSvc *notification.Service
+	if cfg.Notification.Enabled {
+		notifCfg := &notification.Config{
+			SMTPHost:        cfg.Notification.SMTPHost,
+			SMTPPort:        cfg.Notification.SMTPPort,
+			SMTPUsername:    cfg.Notification.SMTPUsername,
+			SMTPPassword:    cfg.Notification.SMTPPassword,
+			SMTPFrom:        cfg.Notification.SMTPFrom,
+			SMTPFromName:    cfg.Notification.SMTPFromName,
+			SlackWebhookURL: cfg.Notification.SlackWebhookURL,
+			SlackChannel:    cfg.Notification.SlackChannel,
+			SlackUsername:   cfg.Notification.SlackUsername,
+			WebhookURL:      cfg.Notification.WebhookURL,
+			Enabled:         cfg.Notification.Enabled,
+			AsyncSend:       cfg.Notification.AsyncSend,
+			RetryCount:      cfg.Notification.RetryCount,
+			TimeoutSec:      cfg.Notification.TimeoutSec,
+		}
+		notificationSvc = notification.NewService(notifCfg, logger.Named("notification"))
+		logger.Info("notification service initialized",
+			zap.Bool("email_enabled", notifCfg.SMTPHost != ""),
+			zap.Bool("slack_enabled", notifCfg.SlackWebhookURL != ""),
+			zap.Bool("webhook_enabled", notifCfg.WebhookURL != ""),
+		)
+	} else {
+		logger.Info("notification service disabled — only Redis Pub/Sub notifications will be sent")
+	}
+
 	// ── Initialize Experiment Engine ─────────────────────────────────────
-	expEngine := experiment.NewEngine(db.DB, rdb, k8sHandler.ClientManagerRef(), siemValidator, logger)
-	logger.Info("experiment engine initialized")
+	expEngine := experiment.NewEngine(db.DB, rdb, k8sHandler.ClientManagerRef(), siemValidator, logger,
+		experiment.WithNotificationService(notificationSvc),
+	)
+	logger.Info("experiment engine initialized",
+		zap.Bool("notification_service", notificationSvc != nil),
+	)
 
 	// ── Initialize Experiment Scheduler ──────────────────────────────────
 	expScheduler := experiment.NewScheduler(expEngine, db.DB, rdb, logger,

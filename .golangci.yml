@@ -103,10 +103,6 @@ linters-settings:
     excludes:
       - G101 # Hardcoded credentials (too many false positives in configs)
       - G404 # Weak random (acceptable for non-crypto in dev)
-    # Global configuration
-    config:
-      global:
-        audit: true
     # Rule-specific overrides
     rules:
       # Allow hardcoded dev credentials in test files

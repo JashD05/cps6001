@@ -1,4 +1,16 @@
-import React, { useEffect, useCallback, useMemo, useState } from 'react';
+import {
+  Search as SearchIcon,
+  Add as AddIcon,
+  FilterList as FilterIcon,
+  Refresh as RefreshIcon,
+  Visibility as ViewIcon,
+  PlayArrow as RunIcon,
+  Stop as StopIcon,
+  Delete as DeleteIcon,
+  Clear as ClearIcon,
+  Science as ScienceIcon,
+  CleaningServices as CleanIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -28,23 +40,11 @@ import {
   CardContent,
   Grid,
   type SelectChangeEvent,
-  type TableRowProps,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  Add as AddIcon,
-  FilterList as FilterIcon,
-  Refresh as RefreshIcon,
-  Visibility as ViewIcon,
-  PlayArrow as RunIcon,
-  Stop as StopIcon,
-  Delete as DeleteIcon,
-  Clear as ClearIcon,
-  Science as ScienceIcon,
-  Sort as SortIcon,
-  CleaningServices as CleanIcon,
-} from '@mui/icons-material';
+import React, { useEffect, useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import StatusBadge from '@/components/StatusBadge';
+import { experimentsAPI } from '@/services/api';
 import { useAppDispatch, useAppSelector, type RootState } from '@/store';
 import {
   fetchExperiments,
@@ -68,9 +68,7 @@ import {
   resetStopStatus,
   selectExecuteError,
 } from '@/store/experimentSlice';
-import StatusBadge from '@/components/StatusBadge';
 import type { Experiment, ExperimentStatus } from '@/types';
-import { experimentsAPI } from '@/services/api';
 
 // ---------------------------------------------------------------------------
 // Constants

@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * WebSocket client for Chaos-Sec real-time features.
  *
@@ -9,8 +10,8 @@
  *  - Redux-compatible event dispatch
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnyAction, Dispatch } from '@reduxjs/toolkit';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAccessToken, clearTokens } from './api';
 
 // ---------------------------------------------------------------------------

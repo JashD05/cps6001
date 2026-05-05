@@ -14,12 +14,10 @@
  * 10. Responsive behaviour (mobile vs desktop)
  */
 
-import React from 'react';
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ReportViewer from '@/components/ReportViewer';
-import { reportsAPI, getErrorMessage } from '@/services/api';
 
 // ---------------------------------------------------------------------------
 // Mocks

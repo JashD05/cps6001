@@ -13,8 +13,8 @@
  *  9. Position grouping
  */
 
-import React, { useEffect, useRef } from 'react';
 import { render, screen, act } from '@testing-library/react';
+import React from 'react';
 import '@testing-library/jest-dom';
 import {
   ToastProvider,
@@ -506,9 +506,6 @@ describe('ToastProvider – manual dismiss', () => {
 
   it('dismisses a specific toast via dismissToast(id)', async () => {
     const idRef: React.MutableRefObject<string | null> = { current: null };
-    const toastRef: React.MutableRefObject<ReturnType<typeof useToast> | null> = {
-      current: null,
-    };
     renderToastProvider({ defaultDuration: 0 }, <IdCaptureConsumer idRef={idRef} />);
     // Need access to toast for dismissToast; use a combined consumer.
     // We'll capture the ref from the IdCaptureConsumer pattern instead.
@@ -914,7 +911,7 @@ describe('showToast – standalone function', () => {
   });
 
   it('returns an ID from showToast when a handler is registered', () => {
-    const handler = jest.fn((opts: ShowToastOptions) => 'test-id-123');
+    const handler = jest.fn((_opts: ShowToastOptions) => 'test-id-123');
     __registerToastHandler(handler);
 
     const id = showToast({ severity: 'info', message: 'Direct call' });

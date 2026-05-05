@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
-import { useSelector, useDispatch } from 'react-redux';
-import { Box, CircularProgress, Typography } from '@mui/material';
 import { Security } from '@mui/icons-material';
+import { Box, CircularProgress, Typography } from '@mui/material';
+import React, { useEffect, useState } from 'react';
+import { useSelector, useDispatch } from 'react-redux';
+import { Navigate, useLocation } from 'react-router-dom';
+import { getAccessToken, getRefreshToken } from '@/services/api';
 import { RootState, AppDispatch } from '@/store';
 import { clearAuth, me, setAuthFromStorage } from '@/store/authSlice';
-import { getAccessToken, getRefreshToken } from '@/services/api';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;

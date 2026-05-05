@@ -1,7 +1,6 @@
 import axios, {
   type AxiosInstance,
   type AxiosError,
-  type AxiosRequestConfig,
   type AxiosResponse,
   type InternalAxiosRequestConfig,
 } from 'axios';
@@ -1341,11 +1340,7 @@ export const dashboardAPI = {
     }),
 
   getClusterHealth: () =>
-    apiClient.get<
-      APIResponse<
-        Array<{ id: string; name: string; status: string; health: ClusterHealth }>
-      >
-    >('/dashboard/cluster-health'),
+    apiClient.get<APIResponse<ClusterHealth[]>>('/dashboard/cluster-health'),
 
   getActivityTimeline: (params?: { days?: number }) =>
     apiClient.get<

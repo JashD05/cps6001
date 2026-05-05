@@ -1,4 +1,25 @@
-import React, { useState, useCallback, type FormEvent } from 'react';
+import {
+  Person as ProfileIcon,
+  Notifications as NotificationsIcon,
+  Security as SIEMIcon,
+  Science as ExperimentIcon,
+  Save as SaveIcon,
+  CheckCircle as SuccessIcon,
+  Email as EmailIcon,
+  Language as LanguageIcon,
+  Palette as ThemeIcon,
+  Timer as TimerIcon,
+  Cloud as CloudIcon,
+  Storage as NamespaceIcon,
+  DeleteSweep as CleanupIcon,
+  Description as LogIcon,
+  HelpOutline as HelpIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
+  VpnKey as KeyIcon,
+  Power as PowerIcon,
+  Send as WebhookIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -32,29 +53,7 @@ import {
   useMediaQuery,
   type SelectChangeEvent,
 } from '@mui/material';
-import {
-  Settings as SettingsIcon,
-  Person as ProfileIcon,
-  Notifications as NotificationsIcon,
-  Security as SIEMIcon,
-  Science as ExperimentIcon,
-  Save as SaveIcon,
-  CheckCircle as SuccessIcon,
-  Email as EmailIcon,
-  Language as LanguageIcon,
-  Palette as ThemeIcon,
-  Timer as TimerIcon,
-  Cloud as CloudIcon,
-  Storage as NamespaceIcon,
-  DeleteSweep as CleanupIcon,
-  Description as LogIcon,
-  HelpOutline as HelpIcon,
-  Visibility as VisibilityIcon,
-  VisibilityOff as VisibilityOffIcon,
-  VpnKey as KeyIcon,
-  Power as PowerIcon,
-  Send as WebhookIcon,
-} from '@mui/icons-material';
+import React, { useState, useCallback, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppSelector, useAppDispatch } from '@/store';
 import { selectCurrentUser, updateUserProfile } from '@/store/authSlice';
@@ -132,7 +131,7 @@ interface ProfileSettingsProps {
 const ProfileSettings: React.FC<ProfileSettingsProps> = ({ onSaved }) => {
   const dispatch = useAppDispatch();
   const currentUser = useAppSelector(selectCurrentUser);
-  const theme = useTheme();
+  const _theme = useTheme();
 
   const [form, setForm] = useState({
     name: currentUser?.name ?? '',
@@ -1190,7 +1189,7 @@ const SettingsPage: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
-  const currentUser = useAppSelector(selectCurrentUser);
+  const _currentUser = useAppSelector(selectCurrentUser);
 
   const [activeTab, setActiveTab] = useState(0);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);

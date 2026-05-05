@@ -1,14 +1,8 @@
-import {
-  createSlice,
-  createAsyncThunk,
-  type PayloadAction,
-  type createSelector,
-} from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
 import { experimentsAPI, getErrorMessage } from '@/services/api';
 import type {
   Experiment,
   ExperimentRun,
-  ExperimentResult,
   ExperimentStatus,
   ExperimentFilters,
   ExperimentListState,

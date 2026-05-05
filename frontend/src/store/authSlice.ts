@@ -1,5 +1,4 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
-import type { AuthState, User, LoginRequest, LoginResponse } from '@/types';
 import {
   authAPI,
   setTokens,
@@ -7,6 +6,7 @@ import {
   getRefreshToken,
   emitAuthSessionExpired,
 } from '@/services/api';
+import type { AuthState, User, LoginRequest, LoginResponse } from '@/types';
 
 // ---------------------------------------------------------------------------
 // API response helpers
@@ -133,7 +133,7 @@ export const logout = createAsyncThunk('auth/logout', async (_, { rejectWithValu
   try {
     await authAPI.logout();
     clearTokens();
-    return;
+    
   } catch (error: unknown) {
     // Even if the server logout fails, clear local tokens
     clearTokens();

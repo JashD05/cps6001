@@ -25,11 +25,12 @@ import (
 
 // Handler holds dependencies for experiment HTTP handlers.
 type Handler struct {
-	db     *sql.DB
-	rdb    *redis.Client
-	cfg    *config.Config
-	logger *zap.Logger
-	engine *Engine // Optional: set via SetEngine for coordinated stop support
+	db            *sql.DB
+	rdb           *redis.Client
+	cfg           *config.Config
+	logger        *zap.Logger
+	engine        *Engine        // Optional: set via SetEngine for coordinated stop support
+	reportService *ReportService // Report generation service
 }
 
 // SetEngine sets the experiment engine on the handler, enabling coordinated
@@ -41,10 +42,11 @@ func (h *Handler) SetEngine(engine *Engine) {
 // NewHandler creates a new experiment handler with the provided dependencies.
 func NewHandler(db *sql.DB, rdb *redis.Client, cfg *config.Config, logger *zap.Logger) *Handler {
 	return &Handler{
-		db:     db,
-		rdb:    rdb,
-		cfg:    cfg,
-		logger: logger.Named("experiment_handler"),
+		db:            db,
+		rdb:           rdb,
+		cfg:           cfg,
+		logger:        logger.Named("experiment_handler"),
+		reportService: NewReportService(db),
 	}
 }
 
@@ -2625,11 +2627,18 @@ func (h *Handler) GenerateReport(c *gin.Context) {
 		}
 	}
 
-	// Create the report record
-	var reportID uuid.UUID
-	var downloadURL *string
-	var fileSize *int64
+	// Require at least one experiment ID for report generation
+	if len(experimentIDs) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "At least one experiment ID is required to generate a report.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
 
+	// Create the report record with 'generating' status
+	var reportID uuid.UUID
 	err = h.db.QueryRowContext(c.Request.Context(), `
 		INSERT INTO reports (organization_id, title, type, format, description,
 		                    experiment_ids, date_range_from, date_range_to,
@@ -2648,25 +2657,112 @@ func (h *Handler) GenerateReport(c *gin.Context) {
 		return
 	}
 
-	// In a real implementation, we would queue a background job to generate the report.
-	// For now, we'll simulate the report generation completing immediately.
-	// TODO: Integrate with a job queue (e.g., Redis-based worker) for async generation.
+	// Generate report content using the primary experiment ID
+	primaryExperimentID := experimentIDs[0]
+	var content []byte
 
-	// Simulate some file being generated
-	generatedURL := "/reports/" + reportID.String() + "/download"
-	generatedSize := int64(1024 * 100) // 100KB placeholder
+	switch req.Format {
+	case "pdf":
+		pdfContent, genErr := h.reportService.GeneratePDFReport(c.Request.Context(), primaryExperimentID)
+		if genErr != nil {
+			h.updateReportError(c.Request.Context(), reportID, "Failed to generate PDF report: "+genErr.Error())
+			h.logger.Error("failed to generate PDF report", zap.Error(genErr), zap.String("report_id", reportID.String()))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+				Error:   "report_generation_failed",
+				Message: "Failed to generate PDF report.",
+				Code:    http.StatusInternalServerError,
+			})
+			return
+		}
+		content = pdfContent
 
-	// Update the report as ready
-	if _, err := h.db.ExecContext(c.Request.Context(), `
-		UPDATE reports
-		SET status = 'ready', download_url = $1, file_size = $2
-		WHERE id = $3
-	`, generatedURL, generatedSize, reportID); err != nil {
-		h.logger.Error("failed to update report status", zap.Error(err))
+	case "json":
+		reportData, genErr := h.reportService.GenerateJSONReport(c.Request.Context(), primaryExperimentID)
+		if genErr != nil {
+			h.updateReportError(c.Request.Context(), reportID, "Failed to generate JSON report: "+genErr.Error())
+			h.logger.Error("failed to generate JSON report", zap.Error(genErr), zap.String("report_id", reportID.String()))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+				Error:   "report_generation_failed",
+				Message: "Failed to generate JSON report.",
+				Code:    http.StatusInternalServerError,
+			})
+			return
+		}
+		jsonContent, marshalErr := json.MarshalIndent(reportData, "", "  ")
+		if marshalErr != nil {
+			h.updateReportError(c.Request.Context(), reportID, "Failed to marshal JSON report: "+marshalErr.Error())
+			h.logger.Error("failed to marshal JSON report", zap.Error(marshalErr), zap.String("report_id", reportID.String()))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+				Error:   "report_generation_failed",
+				Message: "Failed to generate JSON report.",
+				Code:    http.StatusInternalServerError,
+			})
+			return
+		}
+		content = jsonContent
+
+	case "csv":
+		csvContent, genErr := h.reportService.GenerateCSVReport(c.Request.Context(), primaryExperimentID)
+		if genErr != nil {
+			h.updateReportError(c.Request.Context(), reportID, "Failed to generate CSV report: "+genErr.Error())
+			h.logger.Error("failed to generate CSV report", zap.Error(genErr), zap.String("report_id", reportID.String()))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+				Error:   "report_generation_failed",
+				Message: "Failed to generate CSV report.",
+				Code:    http.StatusInternalServerError,
+			})
+			return
+		}
+		content = csvContent
+
+	case "html":
+		htmlContent, genErr := h.reportService.GenerateHTMLReport(c.Request.Context(), primaryExperimentID)
+		if genErr != nil {
+			h.updateReportError(c.Request.Context(), reportID, "Failed to generate HTML report: "+genErr.Error())
+			h.logger.Error("failed to generate HTML report", zap.Error(genErr), zap.String("report_id", reportID.String()))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+				Error:   "report_generation_failed",
+				Message: "Failed to generate HTML report.",
+				Code:    http.StatusInternalServerError,
+			})
+			return
+		}
+		content = htmlContent
+
+	default:
+		h.updateReportError(c.Request.Context(), reportID, "Unsupported report format: "+req.Format)
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_format",
+			Message: "Unsupported report format: " + req.Format,
+			Code:    http.StatusBadRequest,
+		})
+		return
 	}
 
-	downloadURL = &generatedURL
-	fileSize = &generatedSize
+	// Store the generated content and mark the report as ready
+	generatedURL := "/reports/" + reportID.String() + "/download"
+	generatedSize := int64(len(content))
+
+	_, err = h.db.ExecContext(c.Request.Context(), `
+		UPDATE reports
+		SET status = 'ready', download_url = $1, file_size = $2, content = $3
+		WHERE id = $4
+	`, generatedURL, generatedSize, content, reportID)
+	if err != nil {
+		h.logger.Error("failed to store report content", zap.Error(err), zap.String("report_id", reportID.String()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to store generated report.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	h.logger.Info("report generated successfully",
+		zap.String("report_id", reportID.String()),
+		zap.String("format", req.Format),
+		zap.Int64("file_size", generatedSize),
+	)
 
 	report := models.Report{
 		ID:             reportID,
@@ -2676,8 +2772,8 @@ func (h *Handler) GenerateReport(c *gin.Context) {
 		Format:         req.Format,
 		Description:    req.Description,
 		Status:         "ready",
-		DownloadURL:    downloadURL,
-		FileSize:       fileSize,
+		DownloadURL:    &generatedURL,
+		FileSize:       &generatedSize,
 		GeneratedBy:    claims.UserID,
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
@@ -2688,4 +2784,210 @@ func (h *Handler) GenerateReport(c *gin.Context) {
 		Data:    report,
 		Message: "Report generated successfully.",
 	})
+}
+
+// updateReportError updates a report record with an error status and message.
+func (h *Handler) updateReportError(ctx context.Context, reportID uuid.UUID, errMsg string) {
+	if _, err := h.db.ExecContext(ctx, `
+		UPDATE reports SET status = 'error', error_message = $1 WHERE id = $2
+	`, errMsg, reportID); err != nil {
+		h.logger.Error("failed to update report error status", zap.Error(err))
+	}
+}
+
+// DownloadReport serves the binary content of a generated report.
+// GET /api/v1/reports/:id/download
+func (h *Handler) DownloadReport(c *gin.Context) {
+	claims, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	reportID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid report ID format.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	var format, status string
+	var content []byte
+	err = h.db.QueryRowContext(c.Request.Context(), `
+		SELECT format, status, content
+		FROM reports
+		WHERE id = $1 AND organization_id = $2
+	`, reportID, claims.OrganizationID).Scan(&format, &status, &content)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{
+				Error:   "not_found",
+				Message: "Report not found.",
+				Code:    http.StatusNotFound,
+			})
+			return
+		}
+		h.logger.Error("failed to query report for download", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to retrieve report.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	if status != "ready" {
+		c.JSON(http.StatusConflict, models.ErrorResponse{
+			Error:   "report_not_ready",
+			Message: "Report is not ready for download. Current status: " + status,
+			Code:    http.StatusConflict,
+		})
+		return
+	}
+
+	if content == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:   "content_missing",
+			Message: "Report content is not available.",
+			Code:    http.StatusNotFound,
+		})
+		return
+	}
+
+	// Determine content type based on format
+	contentTypes := map[string]string{
+		"pdf":  "application/pdf",
+		"json": "application/json",
+		"csv":  "text/csv",
+		"html": "text/html",
+	}
+	contentType, ok := contentTypes[format]
+	if !ok {
+		contentType = "application/octet-stream"
+	}
+
+	// Set response headers for file download
+	filename := fmt.Sprintf("report-%s.%s", reportID.String(), format)
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	c.Header("Content-Length", strconv.Itoa(len(content)))
+	c.Data(http.StatusOK, contentType, content)
+}
+
+// ShareReportRequest represents a request to share a report via email.
+type ShareReportRequest struct {
+	Emails  []string `json:"emails" binding:"required,min=1"`
+	Message string   `json:"message"`
+}
+
+// ShareReport shares a report with specified email recipients.
+// POST /api/v1/reports/:id/share
+func (h *Handler) ShareReport(c *gin.Context) {
+	claims, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	reportID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid report ID format.",
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	var req ShareReportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Invalid request body: " + err.Error(),
+			Code:    http.StatusBadRequest,
+		})
+		return
+	}
+
+	// Validate email addresses
+	for _, email := range req.Emails {
+		if !isValidEmail(email) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{
+				Error:   "invalid_email",
+				Message: "Invalid email address: " + email,
+				Code:    http.StatusBadRequest,
+			})
+			return
+		}
+	}
+
+	// Verify the report exists and belongs to the user's organization
+	var title, format string
+	err = h.db.QueryRowContext(c.Request.Context(), `
+		SELECT title, format
+		FROM reports
+		WHERE id = $1 AND organization_id = $2
+	`, reportID, claims.OrganizationID).Scan(&title, &format)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{
+				Error:   "not_found",
+				Message: "Report not found.",
+				Code:    http.StatusNotFound,
+			})
+			return
+		}
+		h.logger.Error("failed to query report for sharing", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to share report.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	// TODO: Integrate with an email service (e.g., SMTP or SendGrid) to send the report
+	// to the specified recipients. For now, log the share action.
+	h.logger.Info("report shared",
+		zap.String("report_id", reportID.String()),
+		zap.Strings("recipients", req.Emails),
+		zap.String("shared_by", claims.UserID.String()),
+	)
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data: gin.H{
+			"report_id":  reportID,
+			"title":      title,
+			"format":     format,
+			"recipients": req.Emails,
+			"shared_by":  claims.UserID,
+			"shared_at":  time.Now(),
+		},
+		Message: "Report shared successfully.",
+	})
+}
+
+// isValidEmail performs basic validation on an email address.
+func isValidEmail(email string) bool {
+	if email == "" {
+		return false
+	}
+	at := strings.LastIndex(email, "@")
+	if at < 1 || at >= len(email)-1 {
+		return false
+	}
+	dot := strings.LastIndex(email[at:], ".")
+	return dot > 0
 }

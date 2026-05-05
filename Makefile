@@ -106,7 +106,7 @@ infra-down: ## Stop all infrastructure services
 	@echo "$(GREEN)✔ Infrastructure services stopped$(RESET)"
 
 .PHONY: infra-logs
-infra-logs: ## Tail infrastructure logs (svc=postgres|redis|rabbitmq|mock-siem|backend|frontend|prometheus|grafana)
+infra-logs: ## Tail infrastructure logs (svc=postgres|redis|mock-siem|backend|frontend|prometheus|grafana)
 	@echo "$(CYAN)▶ Tailing logs for: $(or $(svc),all services)$(RESET)"
 	$(COMPOSE) -f $(COMPOSE_FILE) logs -f $(svc)
 

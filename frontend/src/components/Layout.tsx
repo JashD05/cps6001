@@ -1,5 +1,25 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useLocation, Outlet } from 'react-router-dom';
+import {
+  Dashboard as DashboardIcon,
+  Science as ExperimentIcon,
+  Dns as ClusterIcon,
+  Description as TemplateIcon,
+  Assessment as ReportIcon,
+  Settings as SettingsIcon,
+  Notifications as NotificationsIcon,
+  NotificationsActive as NotificationsActiveIcon,
+  ExitToApp as LogoutIcon,
+  Person as ProfileIcon,
+  Menu as MenuIcon,
+  ChevronLeft as ChevronLeftIcon,
+  Add as AddIcon,
+  Speed as SpeedIcon,
+  Security as SecurityIcon,
+  Wifi as WifiIcon,
+  WifiOff as WifiOffIcon,
+  FiberManualRecord as DotIcon,
+  HelpOutline as HelpIcon,
+  Search as SearchIcon,
+} from '@mui/icons-material';
 import {
   Box,
   AppBar,
@@ -31,33 +51,9 @@ import {
   DialogContent,
   InputBase,
 } from '@mui/material';
-import {
-  Dashboard as DashboardIcon,
-  Science as ExperimentIcon,
-  Dns as ClusterIcon,
-  Description as TemplateIcon,
-  Assessment as ReportIcon,
-  Settings as SettingsIcon,
-  Notifications as NotificationsIcon,
-  NotificationsActive as NotificationsActiveIcon,
-  AccountCircle as AccountIcon,
-  ExitToApp as LogoutIcon,
-  Person as ProfileIcon,
-  Menu as MenuIcon,
-  ChevronLeft as ChevronLeftIcon,
-  Add as AddIcon,
-  Speed as SpeedIcon,
-  Security as SecurityIcon,
-  TrendingUp as TrendingUpIcon,
-  Wifi as WifiIcon,
-  WifiOff as WifiOffIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  FiberManualRecord as DotIcon,
-  HelpOutline as HelpIcon,
-  Search as SearchIcon,
-} from '@mui/icons-material';
+import { useState, useEffect, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { logout, selectCurrentUser } from '@/store/authSlice';
 import { fetchExperiments, selectExperimentList } from '@/store/experimentSlice';
 import type { AppDispatch } from '@/store';
@@ -78,10 +74,6 @@ const NAV_ITEMS = [
   { label: 'Templates', path: '/templates', icon: <TemplateIcon /> },
   { label: 'Reports', path: '/reports', icon: <ReportIcon /> },
   { label: 'Settings', path: '/settings', icon: <SettingsIcon /> },
-];
-
-const QUICK_ACTIONS = [
-  { label: 'New Experiment', path: '/experiments/new', icon: <AddIcon /> },
 ];
 
 // ---------------------------------------------------------------------------

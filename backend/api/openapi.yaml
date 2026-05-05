@@ -192,7 +192,15 @@ paths:
           description: Filter by experiment type
           schema:
             type: string
-            enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+            enum:
+              [
+                pod_kill,
+                network_delay,
+                cpu_stress,
+                dns_failure,
+                disk_fill,
+                custom,
+              ]
         - name: cluster_id
           in: query
           description: Filter by target cluster ID
@@ -895,12 +903,6 @@ paths:
                             enum: [healthy, unhealthy]
                           latency_ms:
                             type: integer
-                      rabbitmq:
-                        type: object
-                        properties:
-                          status:
-                            type: string
-                            enum: [healthy, unhealthy]
                       siem:
                         type: object
                         properties:
@@ -920,7 +922,6 @@ paths:
 # Components
 # ============================================================================
 components:
-
   # ---------------------------------------------------------------------------
   # Security Schemes
   # ---------------------------------------------------------------------------
@@ -950,7 +951,6 @@ components:
   # Schemas
   # ---------------------------------------------------------------------------
   schemas:
-
     # -------------------------------------------------------------------------
     # User
     # -------------------------------------------------------------------------
@@ -1051,7 +1051,8 @@ components:
     # -------------------------------------------------------------------------
     Experiment:
       type: object
-      required: [id, name, type, status, cluster_id, created_by, created_at, updated_at]
+      required:
+        [id, name, type, status, cluster_id, created_by, created_at, updated_at]
       properties:
         id:
           type: string
@@ -1072,7 +1073,15 @@ components:
           example: Validates that alerting triggers when the payment pod is killed
         type:
           type: string
-          enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+          enum:
+            [
+              pod_kill,
+              network_delay,
+              cpu_stress,
+              dns_failure,
+              disk_fill,
+              custom,
+            ]
           description: Experiment type determining the chaos action
           example: pod_kill
         status:
@@ -1203,7 +1212,15 @@ components:
           maxLength: 2000
         type:
           type: string
-          enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+          enum:
+            [
+              pod_kill,
+              network_delay,
+              cpu_stress,
+              dns_failure,
+              disk_fill,
+              custom,
+            ]
         cluster_id:
           type: string
           format: uuid
@@ -1317,7 +1334,15 @@ components:
             alerting, and recovery controls.
         type:
           type: string
-          enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+          enum:
+            [
+              pod_kill,
+              network_delay,
+              cpu_stress,
+              dns_failure,
+              disk_fill,
+              custom,
+            ]
           description: Experiment type this template creates
         category:
           type: string
@@ -1400,7 +1425,15 @@ components:
           maxLength: 2000
         type:
           type: string
-          enum: [pod_kill, network_delay, cpu_stress, dns_failure, disk_fill, custom]
+          enum:
+            [
+              pod_kill,
+              network_delay,
+              cpu_stress,
+              dns_failure,
+              disk_fill,
+              custom,
+            ]
         category:
           type: string
           enum: [infrastructure, network, application, security, custom]

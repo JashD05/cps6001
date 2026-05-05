@@ -14,15 +14,16 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Env        string `json:"env"`
-	Server     ServerConfig
-	Database   DatabaseConfig
-	Redis      RedisConfig
-	JWT        JWTConfig
-	SIEM       SIEMConfig
-	Kubernetes KubernetesConfig
-	RateLimit  RateLimitConfig
-	Logging    LoggingConfig
+	Env          string `json:"env"`
+	Server       ServerConfig
+	Database     DatabaseConfig
+	Redis        RedisConfig
+	JWT          JWTConfig
+	SIEM         SIEMConfig
+	Kubernetes   KubernetesConfig
+	RateLimit    RateLimitConfig
+	Logging      LoggingConfig
+	Notification NotificationConfig
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -66,12 +67,36 @@ type JWTConfig struct {
 	Issuer        string        `json:"issuer"`
 }
 
+// NotificationConfig holds notification service configuration for
+// sending alerts through email (SMTP), Slack, and generic webhooks.
+type NotificationConfig struct {
+	Enabled         bool   `json:"enabled"`
+	SMTPHost        string `json:"smtp_host"`
+	SMTPPort        int    `json:"smtp_port"`
+	SMTPUsername    string `json:"smtp_username"`
+	SMTPPassword    string `json:"-"`
+	SMTPFrom        string `json:"smtp_from"`
+	SMTPFromName    string `json:"smtp_from_name"`
+	SlackWebhookURL string `json:"slack_webhook_url"`
+	SlackChannel    string `json:"slack_channel"`
+	SlackUsername   string `json:"slack_username"`
+	WebhookURL      string `json:"webhook_url"`
+	AsyncSend       bool   `json:"async_send"`
+	RetryCount      int    `json:"retry_count"`
+	TimeoutSec      int    `json:"timeout_sec"`
+}
+
 // SIEMConfig holds SIEM integration configuration.
 type SIEMConfig struct {
-	Enabled  bool   `json:"enabled"`
-	Provider string `json:"provider"`
-	Endpoint string `json:"endpoint"`
-	APIKey   string `json:"-"`
+	Enabled    bool          `json:"enabled"`
+	Provider   string        `json:"provider"`
+	Endpoint   string        `json:"endpoint"`
+	APIKey     string        `json:"-"`
+	Username   string        `json:"username,omitempty"`
+	Password   string        `json:"-"`
+	Index      string        `json:"index,omitempty"`
+	Timeout    time.Duration `json:"timeout,omitempty"`
+	MaxRetries int           `json:"max_retries,omitempty"`
 }
 
 // KubernetesConfig holds Kubernetes integration configuration.
@@ -163,10 +188,15 @@ func Load() (*Config, error) {
 			Issuer:        getEnv("CHAOS_JWT_ISSUER", "chaos-sec"),
 		},
 		SIEM: SIEMConfig{
-			Enabled:  getBoolEnv("CHAOS_SIEM_ENABLED", false),
-			Provider: getEnv("CHAOS_SIEM_PROVIDER", ""),
-			Endpoint: getEnv("CHAOS_SIEM_ENDPOINT", ""),
-			APIKey:   getEnv("CHAOS_SIEM_API_KEY", ""),
+			Enabled:    getBoolEnv("CHAOS_SIEM_ENABLED", false),
+			Provider:   getEnv("CHAOS_SIEM_PROVIDER", "mock"),
+			Endpoint:   getEnv("CHAOS_SIEM_ENDPOINT", ""),
+			APIKey:     getEnv("CHAOS_SIEM_API_KEY", ""),
+			Username:   getEnv("CHAOS_SIEM_USERNAME", ""),
+			Password:   getEnv("CHAOS_SIEM_PASSWORD", ""),
+			Index:      getEnv("CHAOS_SIEM_INDEX", ""),
+			Timeout:    getDurationEnv("CHAOS_SIEM_TIMEOUT", 30*time.Second),
+			MaxRetries: getIntEnv("CHAOS_SIEM_MAX_RETRIES", 3),
 		},
 		Kubernetes: KubernetesConfig{
 			Namespace:      getEnv("CHAOS_K8S_NAMESPACE", "chaos-sec"),
@@ -183,6 +213,22 @@ func Load() (*Config, error) {
 		Logging: LoggingConfig{
 			Level:  getEnv("CHAOS_LOG_LEVEL", "info"),
 			Format: getEnv("CHAOS_LOG_FORMAT", "json"),
+		},
+		Notification: NotificationConfig{
+			Enabled:         getBoolEnv("CHAOS_NOTIFICATION_ENABLED", false),
+			SMTPHost:        getEnv("CHAOS_NOTIFICATION_SMTP_HOST", ""),
+			SMTPPort:        getIntEnv("CHAOS_NOTIFICATION_SMTP_PORT", 587),
+			SMTPUsername:    getEnv("CHAOS_NOTIFICATION_SMTP_USERNAME", ""),
+			SMTPPassword:    getEnv("CHAOS_NOTIFICATION_SMTP_PASSWORD", ""),
+			SMTPFrom:        getEnv("CHAOS_NOTIFICATION_SMTP_FROM", ""),
+			SMTPFromName:    getEnv("CHAOS_NOTIFICATION_SMTP_FROM_NAME", "Chaos-Sec"),
+			SlackWebhookURL: getEnv("CHAOS_NOTIFICATION_SLACK_WEBHOOK_URL", ""),
+			SlackChannel:    getEnv("CHAOS_NOTIFICATION_SLACK_CHANNEL", ""),
+			SlackUsername:   getEnv("CHAOS_NOTIFICATION_SLACK_USERNAME", "Chaos-Sec"),
+			WebhookURL:      getEnv("CHAOS_NOTIFICATION_WEBHOOK_URL", ""),
+			AsyncSend:       getBoolEnv("CHAOS_NOTIFICATION_ASYNC_SEND", true),
+			RetryCount:      getIntEnv("CHAOS_NOTIFICATION_RETRY_COUNT", 3),
+			TimeoutSec:      getIntEnv("CHAOS_NOTIFICATION_TIMEOUT_SEC", 30),
 		},
 	}
 
