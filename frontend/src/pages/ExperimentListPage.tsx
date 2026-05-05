@@ -42,6 +42,7 @@ import {
   Clear as ClearIcon,
   Science as ScienceIcon,
   Sort as SortIcon,
+  CleaningServices as CleanIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector, type RootState } from '@/store';
@@ -69,6 +70,7 @@ import {
 } from '@/store/experimentSlice';
 import StatusBadge from '@/components/StatusBadge';
 import type { Experiment, ExperimentStatus } from '@/types';
+import { experimentsAPI } from '@/services/api';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -765,8 +767,58 @@ const ExperimentListPage: React.FC = () => {
             <>
               {executeError}
               <br />
-              <strong>Tip:</strong> Wait for running experiments to complete, or ask your
-              administrator to increase the <code>CHAOS_K8S_MAX_CONCURRENT</code> limit.
+              <strong>Tip:</strong> Stop experiments that are no longer needed, or wait
+              for running experiments to complete.{' '}
+              <Button
+                size="small"
+                variant="text"
+                sx={{
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  p: 0,
+                  minWidth: 0,
+                  verticalAlign: 'baseline',
+                }}
+                onClick={() => {
+                  dispatch(setExperimentFilters({ status: 'running' }));
+                  dispatch(setExperimentPage(1));
+                }}
+              >
+                View active runs →
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                startIcon={<CleanIcon />}
+                sx={{ textTransform: 'none', fontWeight: 600, ml: 1 }}
+                onClick={async () => {
+                  try {
+                    const res = await experimentsAPI.cancelStaleRuns();
+                    const count = (res.data?.data as any)?.cancelled_count ?? 0;
+                    if (count > 0) {
+                      dispatch(resetExecuteStatus());
+                      await dispatch(
+                        fetchExperiments({
+                          page: experiments.length > 0 ? 1 : 1,
+                          limit: 10,
+                        }),
+                      );
+                    }
+                    alert(
+                      count > 0
+                        ? `Cancelled ${count} stale run${count === 1 ? '' : 's'}. You can now try running your experiment again.`
+                        : 'No stale runs found. All active runs are currently in progress.',
+                    );
+                  } catch {
+                    alert(
+                      'Failed to cancel stale runs. Please try again or contact your administrator.',
+                    );
+                  }
+                }}
+              >
+                Cancel stale runs
+              </Button>
             </>
           ) : (
             executeError || 'Failed to start experiment. Please try again.'

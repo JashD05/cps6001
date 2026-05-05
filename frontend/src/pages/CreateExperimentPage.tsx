@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -69,7 +69,13 @@ import {
   selectCreateError,
   resetCreateStatus,
 } from '@/store/experimentSlice';
-import { clustersAPI, templatesAPI } from '@/services/api';
+import {
+  clustersAPI,
+  templatesAPI,
+  experimentsAPI,
+  getErrorMessage,
+} from '@/services/api';
+import { MOCK_CLUSTERS } from '@/data/mockClusters';
 import StatusBadge from '@/components/StatusBadge';
 import type {
   AttackTemplate,
@@ -697,79 +703,9 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
     updatedAt: '2024-03-15T00:00:00Z',
   },
 ];
-
-const MOCK_CLUSTERS: Cluster[] = [
-  {
-    id: 'cluster-1',
-    name: 'prod-us-east-1',
-    description: 'Production US East cluster',
-    status: 'healthy',
-    provider: 'aws',
-    region: 'us-east-1',
-    version: '1.28.3',
-    nodeCount: 5,
-    namespaceCount: 12,
-    namespaces: [
-      'default',
-      'kube-system',
-      'monitoring',
-      'app-frontend',
-      'app-backend',
-      'app-data',
-      'chaos-sec',
-      'istio-system',
-      'cert-manager',
-      'logging',
-      'ingress',
-      'security',
-    ],
-    labels: { env: 'prod', region: 'us-east' },
-    lastHealthCheck: new Date().toISOString(),
-    createdAt: '2023-06-01T00:00:00Z',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'cluster-2',
-    name: 'staging-eu-west-1',
-    description: 'Staging EU West cluster',
-    status: 'healthy',
-    provider: 'aws',
-    region: 'eu-west-1',
-    version: '1.27.8',
-    nodeCount: 3,
-    namespaceCount: 8,
-    namespaces: [
-      'default',
-      'kube-system',
-      'monitoring',
-      'staging-app',
-      'chaos-sec',
-      'istio-system',
-      'cert-manager',
-      'logging',
-    ],
-    labels: { env: 'staging', region: 'eu-west' },
-    lastHealthCheck: new Date().toISOString(),
-    createdAt: '2023-08-15T00:00:00Z',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'cluster-3',
-    name: 'dev-local',
-    description: 'Local development cluster (kind)',
-    status: 'degraded',
-    provider: 'kind',
-    region: 'local',
-    version: '1.28.0',
-    nodeCount: 1,
-    namespaceCount: 4,
-    namespaces: ['default', 'kube-system', 'chaos-sec', 'monitoring'],
-    labels: { env: 'dev', region: 'local' },
-    lastHealthCheck: new Date().toISOString(),
-    createdAt: '2024-01-10T00:00:00Z',
-    updatedAt: new Date().toISOString(),
-  },
-];
+// ---------------------------------------------------------------------------
+// Mock Data
+// ---------------------------------------------------------------------------
 
 const SIEM_ALERT_TYPES = [
   'DNS Anomaly',
@@ -854,6 +790,12 @@ const CreateExperimentPage: React.FC = () => {
 
   const [activeStep, setActiveStep] = useState(0);
   const [showAdvancedParameters, setShowAdvancedParameters] = useState(false);
+  const [launchState, setLaunchState] = useState<
+    'idle' | 'waiting' | 'running' | 'failed'
+  >('idle');
+  const [launchMessage, setLaunchMessage] = useState<string | null>(null);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const launchCancelRef = useRef(false);
   const [wizard, setWizard] = useState<WizardState>(initialWizardState);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [templates, setTemplates] = useState<AttackTemplate[]>(MOCK_TEMPLATES);
@@ -951,6 +893,11 @@ const CreateExperimentPage: React.FC = () => {
     wizard.templateSearch,
   ]);
 
+  const isSubmitting = createStatus === 'loading' || launchState !== 'idle';
+  const isCreateLoading = createStatus === 'loading';
+  const isLaunchWaiting = launchState === 'waiting';
+  const isLaunchRunning = launchState === 'running';
+
   const isStepValid = useMemo(() => {
     switch (activeStep) {
       case 0:
@@ -1034,6 +981,11 @@ const CreateExperimentPage: React.FC = () => {
   const handleCreate = useCallback(async () => {
     if (!selectedTemplate || !wizard.clusterId) return;
 
+    launchCancelRef.current = false;
+    setLaunchState('idle');
+    setLaunchMessage(null);
+    setLaunchError(null);
+
     const request: CreateExperimentRequest = {
       name: wizard.name.trim(),
       description: wizard.description.trim(),
@@ -1050,11 +1002,65 @@ const CreateExperimentPage: React.FC = () => {
       tags: wizard.tags.length > 0 ? wizard.tags : undefined,
     };
 
-    const result = await dispatch(createExperiment(request));
-    if (createExperiment.fulfilled.match(result) && result.payload?.id) {
-      navigate(`/experiments/${result.payload.id}`);
+    try {
+      const created = await dispatch(createExperiment(request)).unwrap();
+
+      const maxAttempts = 60;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (launchCancelRef.current) {
+          setLaunchState('idle');
+          setLaunchMessage(null);
+          setLaunchError(null);
+          return;
+        }
+
+        try {
+          setLaunchState('running');
+          setLaunchMessage('Starting experiment...');
+          await experimentsAPI.execute(created.id, wizard.clusterId);
+          navigate(`/experiments/${created.id}`);
+          return;
+        } catch (error) {
+          const message = getErrorMessage(error);
+          const isConcurrencyLimit =
+            /concurrency_limit|Maximum concurrent experiments/i.test(message);
+          if (!isConcurrencyLimit) {
+            setLaunchState('failed');
+            setLaunchError(message);
+            return;
+          }
+
+          setLaunchState('waiting');
+          setLaunchMessage(
+            `Maximum concurrent experiments reached. Waiting for a free slot... (${attempt + 1}/${maxAttempts})`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
+      }
+
+      if (launchCancelRef.current) {
+        setLaunchState('idle');
+        setLaunchMessage(null);
+        setLaunchError(null);
+        return;
+      }
+
+      setLaunchState('failed');
+      setLaunchError(
+        'Timed out waiting for a free slot. Please try again once another run finishes.',
+      );
+    } catch (error) {
+      setLaunchState('failed');
+      setLaunchError(getErrorMessage(error));
     }
   }, [dispatch, navigate, selectedTemplate, wizard]);
+
+  const handleCancelLaunch = useCallback(() => {
+    launchCancelRef.current = true;
+    setLaunchState('idle');
+    setLaunchMessage(null);
+    setLaunchError(null);
+  }, []);
 
   const handleCancel = useCallback(() => {
     navigate('/experiments');
@@ -2613,9 +2619,9 @@ const CreateExperimentPage: React.FC = () => {
             <Button
               variant="contained"
               onClick={handleCreate}
-              disabled={createStatus === 'loading'}
+              disabled={isSubmitting}
               startIcon={
-                createStatus === 'loading' ? (
+                isSubmitting ? (
                   <CircularProgress size={18} sx={{ color: '#fff' }} />
                 ) : (
                   <CreateIcon />
@@ -2631,26 +2637,50 @@ const CreateExperimentPage: React.FC = () => {
                 },
               }}
             >
-              {createStatus === 'loading' ? 'Creating...' : 'Create Experiment'}
+              {isCreateLoading
+                ? 'Creating...'
+                : isLaunchWaiting
+                  ? 'Waiting for slot...'
+                  : isLaunchRunning
+                    ? 'Creating and running...'
+                    : 'Create Experiment'}
             </Button>
           )}
         </Box>
       </Paper>
 
-      {/* Creation Success Alert */}
-      {createStatus === 'succeeded' && (
+      {/* Create / Run Progress */}
+      {isCreateLoading && (
+        <Alert severity="info" sx={{ mt: 3, borderRadius: 2 }}>
+          <AlertTitle>Creating experiment</AlertTitle>
+          Your experiment is being created. It will be launched automatically right after.
+        </Alert>
+      )}
+      {isLaunchWaiting && (
         <Alert
-          severity="success"
+          severity="info"
           sx={{ mt: 3, borderRadius: 2 }}
           action={
-            <Button color="inherit" size="small" onClick={() => navigate('/experiments')}>
-              View All
+            <Button color="inherit" size="small" onClick={handleCancelLaunch}>
+              Cancel
             </Button>
           }
         >
-          <AlertTitle>Experiment Created!</AlertTitle>
-          Your experiment has been created successfully. You will be redirected to the
-          experiment detail page.
+          <AlertTitle>Waiting for a free slot</AlertTitle>
+          {launchMessage ??
+            'Maximum concurrent experiments reached. Waiting to launch...'}
+        </Alert>
+      )}
+      {isLaunchRunning && !isCreateLoading && (
+        <Alert severity="info" sx={{ mt: 3, borderRadius: 2 }}>
+          <AlertTitle>Launching experiment</AlertTitle>
+          {launchMessage ?? 'The experiment is starting now.'}
+        </Alert>
+      )}
+      {launchState === 'failed' && launchError && (
+        <Alert severity="error" sx={{ mt: 3, borderRadius: 2 }}>
+          <AlertTitle>Experiment created, but execution failed</AlertTitle>
+          {launchError}
         </Alert>
       )}
     </Box>

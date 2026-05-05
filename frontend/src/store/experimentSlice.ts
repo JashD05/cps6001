@@ -9,6 +9,7 @@ import type {
   Experiment,
   ExperimentRun,
   ExperimentResult,
+  ExperimentStatus,
   ExperimentFilters,
   ExperimentListState,
   ExperimentDetailState,
@@ -427,28 +428,34 @@ const experimentSlice = createSlice({
         state.executeStatus = 'succeeded';
         const { id, run } = action.payload;
 
-        // Mark the experiment as running in the list so the UI updates immediately.
-        // The actual run progress and results will come from the backend on refresh.
+        // Use the actual run status from the backend response. For simulated
+        // runs the status is already 'completed' with a result; for real
+        // async runs it will be 'pending' or 'running'.
+        const runStatus = (run.status || 'running') as ExperimentStatus;
+        const runResult = run.result ?? undefined;
+        const runProgress = runStatus === 'completed' ? 100 : 0;
+
+        // Update the experiment in the list so the UI reflects the new state.
         const listExperiment = state.list.experiments.find((e) => e.id === id);
         if (listExperiment) {
-          listExperiment.status = 'running';
+          listExperiment.status = runStatus;
           listExperiment.startedAt = run.startedAt ?? listExperiment.startedAt;
-          listExperiment.progress = 0;
-          listExperiment.result = undefined;
+          listExperiment.progress = runProgress;
+          listExperiment.result = runResult;
         }
 
         if (state.detail.experiment?.id === id) {
           state.detail.experiment = {
             ...state.detail.experiment,
-            status: 'running',
+            status: runStatus,
             startedAt: run.startedAt ?? state.detail.experiment.startedAt,
-            progress: 0,
-            result: undefined,
+            progress: runProgress,
+            result: runResult,
           };
           state.detail.currentRun = {
             ...run,
-            status: 'running',
-            progress: 0,
+            status: runStatus,
+            progress: runProgress,
           };
         }
       })

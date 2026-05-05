@@ -797,8 +797,6 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 	}
 
 	switch expStatus {
-	case "draft", "active", "pending", "queued", "stopped", "completed", "failed", "timed_out", "archived":
-		// Re-run allowed from any non-running state
 	case "running":
 		c.JSON(http.StatusConflict, models.ErrorResponse{
 			Error:   "conflict",
@@ -807,12 +805,8 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 		})
 		return
 	default:
-		c.JSON(http.StatusConflict, models.ErrorResponse{
-			Error:   "conflict",
-			Message: fmt.Sprintf("Experiment is in '%s' status and cannot be executed.", expStatus),
-			Code:    http.StatusConflict,
-		})
-		return
+		// Re-run allowed from any non-running state (draft, active, pending,
+		// queued, stopped, completed, failed, timed_out, archived, etc.)
 	}
 
 	// Verify the cluster exists, belongs to the org, and is connected
@@ -864,13 +858,13 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 		// Non-fatal: continue with execution
 	}
 
-	// Also expire pending runs that never started (no started_at) but have been
-	// queued for longer than the pod timeout.
+	// Also expire pending or queued runs that never started (no started_at) but
+	// have been waiting longer than the pod timeout.
 	_, err = h.db.ExecContext(c.Request.Context(), `
 		UPDATE experiment_runs
 		SET status = 'timed_out', completed_at = NOW(),
 		    error_message = 'Run was never picked up by a worker and was automatically expired'
-		WHERE status = 'pending'
+		WHERE status IN ('pending', 'queued')
 		  AND started_at IS NULL
 		  AND created_at < $1
 	`, staleCutoff)
@@ -917,20 +911,6 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 		})
 		return
 	}
-	// Calculate the next run number
-	var maxRunNumber sql.NullInt64
-	if qerr := h.db.QueryRowContext(c.Request.Context(),
-		"SELECT MAX(run_number) FROM experiment_runs WHERE experiment_id = $1",
-		experimentID,
-	).Scan(&maxRunNumber); qerr != nil && qerr != sql.ErrNoRows {
-		h.logger.Warn("failed to query max run number, defaulting to 1", zap.Error(qerr))
-	}
-
-	nextRunNumber := 1
-	if maxRunNumber.Valid {
-		nextRunNumber = int(maxRunNumber.Int64) + 1
-	}
-
 	// Transition experiment to active status if it's not already active.
 	// Covers draft, pending, archived (never run or previously archived),
 	// and all terminal states (stopped, completed, failed, timed_out) for re-runs.
@@ -943,6 +923,63 @@ func (h *Handler) ExecuteExperiment(c *gin.Context) {
 			h.logger.Error("failed to transition experiment to active", zap.Error(err))
 			// Non-fatal: the experiment can still run
 		}
+	}
+
+	// If the execution engine is available, use it to produce a real run with
+	// steps, logs, pods, and final results instead of the lightweight simulation.
+	if h.engine != nil {
+		run, execErr := h.engine.ExecuteExperiment(c.Request.Context(), experimentID, claims.UserID)
+		if execErr != nil {
+			h.logger.Error("failed to execute experiment with engine", zap.Error(execErr))
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+				Error:   "internal_error",
+				Message: "Failed to execute experiment.",
+				Code:    http.StatusInternalServerError,
+			})
+			return
+		}
+
+		experimentStatus := run.Status
+		if experimentStatus == "cancelled" {
+			experimentStatus = "stopped"
+		}
+		if _, err := h.db.ExecContext(c.Request.Context(),
+			"UPDATE experiments SET status = $1, updated_at = NOW() WHERE id = $2",
+			experimentStatus, experimentID,
+		); err != nil {
+			h.logger.Warn("failed to update experiment status after execution", zap.Error(err))
+		}
+
+		h.logger.Info("experiment completed",
+			zap.String("run_id", run.ID.String()),
+			zap.String("experiment_id", experimentID.String()),
+			zap.String("status", run.Status),
+		)
+
+		c.JSON(http.StatusAccepted, models.APIResponse{
+			Success: true,
+			Data:    run,
+		})
+		return
+	}
+
+	// -----------------------------------------------------------------------
+	// Legacy simulation path (used when the execution engine isn't wired up).
+	// This keeps tests and local development working even without Kubernetes.
+	// -----------------------------------------------------------------------
+
+	// Calculate the next run number
+	var maxRunNumber sql.NullInt64
+	if qerr := h.db.QueryRowContext(c.Request.Context(),
+		"SELECT MAX(run_number) FROM experiment_runs WHERE experiment_id = $1",
+		experimentID,
+	).Scan(&maxRunNumber); qerr != nil && qerr != sql.ErrNoRows {
+		h.logger.Warn("failed to query max run number, defaulting to 1", zap.Error(qerr))
+	}
+
+	nextRunNumber := 1
+	if maxRunNumber.Valid {
+		nextRunNumber = int(maxRunNumber.Int64) + 1
 	}
 
 	// Create the experiment run record
@@ -1337,6 +1374,112 @@ func (h *Handler) StopExperiment(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{
 		Success: true,
 		Data:    updatedExp,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// CancelStaleRunsHandler
+// ---------------------------------------------------------------------------
+
+// CancelStaleRunsHandler cancels experiment runs that have been stuck in
+// pending, queued, or running status for longer than the configured pod
+// timeout. This frees up concurrency slots when runs are stuck due to
+// worker failures, disconnected clusters, or other issues.
+//
+// POST /api/v1/experiments/stale-runs/cancel?cluster_id=<uuid>
+func (h *Handler) CancelStaleRunsHandler(c *gin.Context) {
+	claims, err := h.getClaimsFromContext(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Authentication required.",
+			Code:    http.StatusUnauthorized,
+		})
+		return
+	}
+
+	if !claims.HasPermission("experiments:execute") {
+		c.JSON(http.StatusForbidden, models.ErrorResponse{
+			Error:   "forbidden",
+			Message: "You do not have permission to cancel stale experiment runs.",
+			Code:    http.StatusForbidden,
+		})
+		return
+	}
+
+	// Allow optional cluster_id filter via query parameter.
+	clusterIDFilter := c.Query("cluster_id")
+
+	// Use pod timeout as the staleness threshold. Runs older than this
+	// in a non-terminal state are considered stale.
+	staleCutoff := time.Now().Add(-h.cfg.Kubernetes.PodTimeout)
+
+	var result sql.Result
+
+	if clusterIDFilter != "" {
+		clusterID, parseErr := uuid.Parse(clusterIDFilter)
+		if parseErr != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{
+				Error:   "invalid_id",
+				Message: "Invalid cluster_id format.",
+				Code:    http.StatusBadRequest,
+			})
+			return
+		}
+
+		result, err = h.db.ExecContext(c.Request.Context(), `
+			UPDATE experiment_runs
+			SET status = 'cancelled', completed_at = NOW(),
+			    error_message = 'Cancelled by user: stale run exceeded pod timeout'
+			WHERE status IN ('running', 'pending', 'queued')
+			  AND cluster_id = $1
+			  AND (
+			    (started_at IS NOT NULL AND started_at < $2)
+			    OR (started_at IS NULL AND created_at < $2)
+			  )
+			  AND experiment_id IN (
+			    SELECT id FROM experiments WHERE organization_id = $3
+			  )
+		`, clusterID, staleCutoff, claims.OrganizationID)
+	} else {
+		result, err = h.db.ExecContext(c.Request.Context(), `
+			UPDATE experiment_runs
+			SET status = 'cancelled', completed_at = NOW(),
+			    error_message = 'Cancelled by user: stale run exceeded pod timeout'
+			WHERE status IN ('running', 'pending', 'queued')
+			  AND (
+			    (started_at IS NOT NULL AND started_at < $1)
+			    OR (started_at IS NULL AND created_at < $1)
+			  )
+			  AND experiment_id IN (
+			    SELECT id FROM experiments WHERE organization_id = $2
+			  )
+		`, staleCutoff, claims.OrganizationID)
+	}
+
+	if err != nil {
+		h.logger.Error("failed to cancel stale experiment runs", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to cancel stale runs.",
+			Code:    http.StatusInternalServerError,
+		})
+		return
+	}
+
+	cancelledCount, _ := result.RowsAffected()
+
+	h.logger.Info("stale experiment runs cancelled",
+		zap.Int64("cancelled_count", cancelledCount),
+		zap.String("cancelled_by", claims.UserID.String()),
+	)
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data: gin.H{
+			"cancelled_count": cancelledCount,
+			"stale_cutoff":    staleCutoff,
+		},
 	})
 }
 

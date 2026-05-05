@@ -216,6 +216,10 @@ func (r *Router) registerAPIRoutes() {
 				r.middleware.RBACMiddleware("experiments:execute"),
 				r.expHandler.StopExperiment,
 			)
+			experiments.POST("/stale-runs/cancel",
+				r.middleware.RBACMiddleware("experiments:execute"),
+				r.expHandler.CancelStaleRunsHandler,
+			)
 			experiments.GET("/:id/runs",
 				r.middleware.RBACMiddleware("experiments:read"),
 				r.expHandler.GetExperimentRuns,

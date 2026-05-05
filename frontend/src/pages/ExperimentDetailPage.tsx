@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -11,6 +11,8 @@ import {
   Divider,
   Tooltip,
   LinearProgress,
+  Alert,
+  AlertTitle,
   Table,
   TableBody,
   TableCell,
@@ -31,9 +33,11 @@ import {
 import {
   Refresh as RefreshIcon,
   ArrowBack as BackIcon,
+  PlayArrow as RunIcon,
   Science as ExperimentIcon,
   Schedule as ScheduleIcon,
   Timer as TimerIcon,
+  Stop as StopIcon,
   Dns as ClusterIcon,
   Person as PersonIcon,
   CheckCircle as CheckCircleIcon,
@@ -60,7 +64,15 @@ import {
   selectExperimentDetailLoading,
   selectExperimentDetailError,
   selectExperimentLogs,
+  executeExperiment,
+  stopExperiment,
+  selectExecuteStatus,
+  selectExecuteError,
+  selectStopStatus,
+  resetExecuteStatus,
+  resetStopStatus,
 } from '@/store/experimentSlice';
+import { experimentsAPI, getErrorMessage } from '@/services/api';
 import StatusBadge from '@/components/StatusBadge';
 import type { ExperimentStep, SIEMValidationResult, ExperimentResult } from '@/types';
 
@@ -88,6 +100,19 @@ const formatDuration = (ms: number): string => {
   if (hours > 0) return `${hours}h ${remainingMinutes}m ${remainingSeconds}s`;
   if (minutes > 0) return `${minutes}m ${remainingSeconds}s`;
   return `${seconds}s`;
+};
+
+const formatParameterValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(formatParameterValue).join(', ');
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 };
 
 const getStepIcon = (status: ExperimentStep['status']): React.ReactElement => {
@@ -737,6 +762,55 @@ const ExperimentDetailPage: React.FC = () => {
   const isLoading = useSelector(selectExperimentDetailLoading);
   const error = useSelector(selectExperimentDetailError);
   const logs = useSelector(selectExperimentLogs);
+  const executeStatus = useSelector(selectExecuteStatus);
+  const executeError = useSelector(selectExecuteError);
+  const stopStatus = useSelector(selectStopStatus);
+
+  const canRun =
+    experiment &&
+    !isLoading &&
+    executeStatus !== ('loading' as string) &&
+    [
+      'draft',
+      'active',
+      'pending',
+      'queued',
+      'stopped',
+      'completed',
+      'failed',
+      'timed_out',
+      'archived',
+    ].includes(experiment.status);
+  const canStop =
+    experiment && ['running', 'pending', 'queued'].includes(experiment.status);
+
+  const handleRun = useCallback(async () => {
+    if (!experiment || !id) return;
+    dispatch(resetExecuteStatus());
+    try {
+      await dispatch(
+        executeExperiment({ id: experiment.id, clusterId: experiment.clusterId }),
+      ).unwrap();
+      // Await the refetch so the detail page picks up the completed
+      // result, logs and pod status from the server.
+      await dispatch(fetchExperimentById(id)).unwrap();
+      dispatch(fetchExperimentLogs({ id, tail: 200 }));
+    } catch {
+      // Error is captured in the slice state and shown below
+    }
+  }, [dispatch, experiment, id]);
+
+  const handleStop = useCallback(async () => {
+    if (!experiment || !id) return;
+    dispatch(resetStopStatus());
+    try {
+      await dispatch(stopExperiment(experiment.id)).unwrap();
+      await dispatch(fetchExperimentById(id)).unwrap();
+      dispatch(fetchExperimentLogs({ id, tail: 200 }));
+    } catch {
+      // Error is captured in the slice state
+    }
+  }, [dispatch, experiment, id]);
   const isNotFound = Boolean(error && /not found|404/i.test(error));
 
   // ---------------------------------------------------------------------------
@@ -966,12 +1040,41 @@ const ExperimentDetailPage: React.FC = () => {
               </Stack>
             </Box>
 
-            {/* Right: Refresh only */}
-            <Tooltip title="Refresh">
-              <IconButton onClick={handleRefresh} disabled={isLoading}>
-                <RefreshIcon />
-              </IconButton>
-            </Tooltip>
+            {/* Right: Action buttons */}
+            <Stack direction="row" spacing={1} alignItems="center">
+              {canRun && (
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<RunIcon />}
+                  onClick={handleRun}
+                  disabled={executeStatus === 'loading'}
+                  sx={{ textTransform: 'none', fontWeight: 600 }}
+                >
+                  {experiment.status === 'draft' || experiment.status === 'pending'
+                    ? 'Run'
+                    : 'Re-run'}
+                </Button>
+              )}
+              {canStop && (
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  startIcon={<StopIcon />}
+                  onClick={handleStop}
+                  disabled={stopStatus === 'loading'}
+                  sx={{ textTransform: 'none', fontWeight: 600 }}
+                >
+                  Stop
+                </Button>
+              )}
+              <Tooltip title="Refresh">
+                <IconButton onClick={handleRefresh} disabled={isLoading}>
+                  <RefreshIcon />
+                </IconButton>
+              </Tooltip>
+            </Stack>
           </Stack>
         </Box>
       </Paper>
@@ -1017,6 +1120,78 @@ const ExperimentDetailPage: React.FC = () => {
             appear here after it runs.
           </Typography>
         </Paper>
+      )}
+
+      {/* Execute / Stop Error Alerts */}
+      {executeStatus === 'failed' && executeError && (
+        <Alert
+          severity={executeError.includes('concurrency_limit') ? 'warning' : 'error'}
+          onClose={() => dispatch(resetExecuteStatus())}
+          sx={{ mb: 3, borderRadius: 2 }}
+        >
+          {executeError.includes('concurrency_limit') ? (
+            <>
+              {executeError}
+              <br />
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ mt: 1 }}
+                flexWrap="wrap"
+                useFlexGap
+              >
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="warning"
+                  sx={{ textTransform: 'none', fontWeight: 600 }}
+                  onClick={async () => {
+                    try {
+                      const res = await experimentsAPI.cancelStaleRuns(
+                        experiment.clusterId
+                          ? { clusterId: experiment.clusterId }
+                          : undefined,
+                      );
+                      const count = (res.data?.data as any)?.cancelled_count ?? 0;
+                      if (count > 0) {
+                        dispatch(resetExecuteStatus());
+                        dispatch(fetchExperimentById(id!));
+                      }
+                      alert(
+                        count > 0
+                          ? `Cancelled ${count} stale run${count === 1 ? '' : 's'}. Try running again.`
+                          : 'No stale runs found. All active runs are currently in progress.',
+                      );
+                    } catch {
+                      alert('Failed to cancel stale runs. Please try again.');
+                    }
+                  }}
+                >
+                  Cancel Stale Runs
+                </Button>
+                <Button
+                  size="small"
+                  variant="text"
+                  sx={{ textTransform: 'none', fontWeight: 600 }}
+                  onClick={() => navigate('/experiments')}
+                >
+                  View All Experiments →
+                </Button>
+              </Stack>
+            </>
+          ) : (
+            executeError
+          )}
+        </Alert>
+      )}
+      {stopStatus === 'failed' && (
+        <Alert
+          severity="error"
+          onClose={() => dispatch(resetStopStatus())}
+          sx={{ mb: 3, borderRadius: 2 }}
+        >
+          Failed to stop experiment. Please refresh and try again.
+        </Alert>
       )}
 
       {/* SIEM Validation — shown inline when data exists */}
@@ -1115,9 +1290,13 @@ const ExperimentDetailPage: React.FC = () => {
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ fontFamily: 'monospace' }}
+                  sx={{
+                    fontFamily: 'monospace',
+                    whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere',
+                  }}
                 >
-                  {JSON.stringify(value)}
+                  {formatParameterValue(value)}
                 </Typography>
               </Stack>
             ))}

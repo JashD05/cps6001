@@ -1204,6 +1204,15 @@ export const experimentsAPI = {
           data: normalizeExperiment(response.data.data),
         },
       })),
+
+  cancelStaleRuns: (params?: {
+    clusterId?: string;
+  }): Promise<AxiosResponse<APIResponse<{ cancelled_count: number }>>> =>
+    apiClient.post<APIResponse<{ cancelled_count: number }>>(
+      '/experiments/stale-runs/cancel',
+      null,
+      { params: { cluster_id: params?.clusterId } },
+    ),
 };
 
 // ---------------------------------------------------------------------------
