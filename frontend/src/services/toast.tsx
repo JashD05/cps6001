@@ -294,7 +294,9 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({
   }, [toasts, defaultPosition]);
 
   // Map position to MUI Snackbar anchorOrigin
-  const positionToAnchor = (pos: ToastPosition): { vertical: 'top' | 'bottom'; horizontal: 'left' | 'right' | 'center' } => {
+  const positionToAnchor = (
+    pos: ToastPosition,
+  ): { vertical: 'top' | 'bottom'; horizontal: 'left' | 'right' | 'center' } => {
     const [v, h] = pos.split('-');
     return {
       vertical: v as 'top' | 'bottom',

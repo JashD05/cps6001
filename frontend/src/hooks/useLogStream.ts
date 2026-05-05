@@ -138,7 +138,8 @@ export function useLogStream(
   // State
   // ---------------------------------------------------------------------------
 
-  const [connectionState, setConnectionState] = useState<WSConnectionState>('disconnected');
+  const [connectionState, setConnectionState] =
+    useState<WSConnectionState>('disconnected');
   const [logs, setLogs] = useState<LogLine[]>([]);
 
   // ---------------------------------------------------------------------------
@@ -348,7 +349,14 @@ export function useLogStream(
         clientRef.current = null;
       }
     };
-  }, [experimentId, autoConnect, autoDisconnect, ensureClient, subscribeToLogs, flushPendingLogs]);
+  }, [
+    experimentId,
+    autoConnect,
+    autoDisconnect,
+    ensureClient,
+    subscribeToLogs,
+    flushPendingLogs,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Re-subscribe after a transient disconnect / reconnect

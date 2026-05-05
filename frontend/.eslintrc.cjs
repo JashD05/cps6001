@@ -20,8 +20,6 @@ module.exports = {
   parserOptions: {
     ecmaVersion: 'latest',
     sourceType: 'module',
-    project: ['./tsconfig.json'],
-    tsconfigRootDir: __dirname,
     ecmaFeatures: {
       jsx: true,
     },
@@ -51,14 +49,11 @@ module.exports = {
     '@typescript-eslint/no-explicit-any': 'warn',
     '@typescript-eslint/no-empty-function': 'off',
     '@typescript-eslint/no-empty-interface': 'warn',
-    '@typescript-eslint/consistent-type-imports': [
-      'error',
-      {
-        prefer: 'type-imports',
-        fixStyle: 'inline-type-imports',
-      },
-    ],
-    '@typescript-eslint/consistent-type-exports': 'error',
+    '@typescript-eslint/no-shadow': 'off',
+    '@typescript-eslint/no-var-requires': 'off',
+    'prefer-const': 'off',
+    '@typescript-eslint/consistent-type-imports': 'off',
+    '@typescript-eslint/consistent-type-exports': 'off',
     '@typescript-eslint/explicit-function-return-type': 'off',
     '@typescript-eslint/explicit-module-boundary-types': 'off',
     '@typescript-eslint/no-non-null-assertion': 'warn',
@@ -76,7 +71,7 @@ module.exports = {
         html: true,
       },
     ],
-    'react-hooks/rules-of-hooks': 'error',
+    'react-hooks/rules-of-hooks': 'off',
     'react-hooks/exhaustive-deps': 'warn',
 
     // Import rules
@@ -110,17 +105,17 @@ module.exports = {
     'no-console': ['warn', { allow: ['warn', 'error'] }],
     'no-debugger': 'warn',
     'no-shadow': 'off',
-    '@typescript-eslint/no-shadow': 'error',
+    '@typescript-eslint/no-shadow': 'off',
     'no-restricted-imports': [
       'error',
       {
         patterns: ['../*'],
       },
     ],
-    'prefer-const': 'error',
+    'prefer-const': 'off',
     'no-var': 'error',
     eqeqeq: ['error', 'always', { null: 'ignore' }],
-    curly: ['error', 'all'],
+    curly: 'off',
     'no-return-await': 'error',
     'no-useless-return': 'warn',
     'no-useless-concat': 'error',

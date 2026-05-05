@@ -18,8 +18,7 @@ import '@testing-library/jest-dom';
 // ---------------------------------------------------------------------------
 
 if (typeof jest === 'undefined') {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { vi } = await import('vitest');
+  const { vi } = require('vitest');
   (globalThis as Record<string, unknown>).jest = vi;
 }
 

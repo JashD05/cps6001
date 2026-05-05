@@ -11,7 +11,7 @@ run:
   timeout: 5m
 
   # Go version to target
-  go: "1.21"
+  go: "1.25"
 
   # List of directories to skip
   skip-dirs:
@@ -50,44 +50,44 @@ linters:
   # Enable specific linters
   enable:
     # ── Security ──────────────────────────────────────────────
-    - gosec          # Security issues (SQL injection, hardcoded creds, etc.)
+    - gosec # Security issues (SQL injection, hardcoded creds, etc.)
 
     # ── Bugs & Correctness ────────────────────────────────────
-    - govet          # Reports suspicious constructs (shadowed vars, etc.)
-    - errcheck       # Checks that error returns are used
-    - bodyclose      # Checks HTTP response body is closed
-    - durationcheck  # Checks for two durations multiplied together
-    - exportloopref  # Checks for loop variable capture in goroutines
-    - goerr113       # Checks for error format strings (Go 1.13+)
-    - sqlclosecheck  # Checks sql.Rows/Stmt are closed
-    - prealloc       # Suggests preallocating slices
+    - govet # Reports suspicious constructs (shadowed vars, etc.)
+    - errcheck # Checks that error returns are used
+    - bodyclose # Checks HTTP response body is closed
+    - durationcheck # Checks for two durations multiplied together
+    - exportloopref # Checks for loop variable capture in goroutines
+    - goerr113 # Checks for error format strings (Go 1.13+)
+    - sqlclosecheck # Checks sql.Rows/Stmt are closed
+    - prealloc # Suggests preallocating slices
 
     # ── Code Quality ──────────────────────────────────────────
-    - staticcheck    # Comprehensive Go vet replacement
-    - gosimple       # Simplifies code
-    - unused         # Finds unused declarations
-    - gocritic       # Opinionated Go source checker
-    - predeclared    # Finds shadowed predeclared identifiers
-    - revive         # Fast, configurable linter (golint replacement)
-    - unconvert      # Removes unnecessary type conversions
-    - unparam        # Finds unused function parameters
+    - staticcheck # Comprehensive Go vet replacement
+    - gosimple # Simplifies code
+    - unused # Finds unused declarations
+    - gocritic # Opinionated Go source checker
+    - predeclared # Finds shadowed predeclared identifiers
+    - revive # Fast, configurable linter (golint replacement)
+    - unconvert # Removes unnecessary type conversions
+    - unparam # Finds unused function parameters
 
     # ── Style & Formatting ────────────────────────────────────
-    - gofmt          # Checks formatting with gofmt
-    - goimports      # Checks import ordering and grouping
-    - misspell       # Finds spelling mistakes
-    - whitespace     # Detects unnecessary whitespace
+    - gofmt # Checks formatting with gofmt
+    - goimports # Checks import ordering and grouping
+    - misspell # Finds spelling mistakes
+    - whitespace # Detects unnecessary whitespace
 
   # Disable specific linters (from default set)
   disable:
-    - exhaustivestruct  # Too strict for this project
-    - godot            # Don't require periods on comments
-    - nlreturn          # Too noisy
-    - wsl               # Too opinionated
-    - lll               # Line length handled by formatter
-    - funlen            # Too strict during early dev
-    - gocyclo           # Replaced by cyclop with better defaults
-    - cyclop            # Will configure separately
+    - exhaustivestruct # Too strict for this project
+    - godot # Don't require periods on comments
+    - nlreturn # Too noisy
+    - wsl # Too opinionated
+    - lll # Line length handled by formatter
+    - funlen # Too strict during early dev
+    - gocyclo # Replaced by cyclop with better defaults
+    - cyclop # Will configure separately
 
 # ----------------------------------------------------------------------------
 # Linter-specific settings
@@ -101,8 +101,8 @@ linters-settings:
     confidence: medium
     # Exclude generated files
     excludes:
-      - G101  # Hardcoded credentials (too many false positives in configs)
-      - G404  # Weak random (acceptable for non-crypto in dev)
+      - G101 # Hardcoded credentials (too many false positives in configs)
+      - G404 # Weak random (acceptable for non-crypto in dev)
     # Global configuration
     config:
       global:
@@ -141,8 +141,8 @@ linters-settings:
     checks: ["all"]
     # Explicitly exclude these checks
     checks-exclude:
-      - SA1019  # Allow use of deprecated functions (flagged per-case)
-      - ST1005  # Allow uppercase error messages
+      - SA1019 # Allow use of deprecated functions (flagged per-case)
+      - ST1005 # Allow uppercase error messages
 
   # ── govet ──────────────────────────────────────────────────────
   govet:
@@ -150,7 +150,7 @@ linters-settings:
     enable-all: true
     # Disable specific analyzers
     disable:
-      - fieldalignment  # Too noisy, not critical for functionality
+      - fieldalignment # Too noisy, not critical for functionality
     # Settings for shadow checking
     settings:
       shadow:
@@ -191,7 +191,7 @@ linters-settings:
       - experimental
       - opinionated
     disabled-tags:
-      - default  # Only to avoid duplication with other linters
+      - default # Only to avoid duplication with other linters
     settings:
       hugeParam:
         sizeThreshold: 80
@@ -240,7 +240,8 @@ linters-settings:
         severity: warning
       - name: var-naming
         severity: warning
-        arguments: [["ID", "HTTP", "URL", "JSON", "API", "SIEM", "JWT"], ["", ""], {}]
+        arguments:
+          [["ID", "HTTP", "URL", "JSON", "API", "SIEM", "JWT"], ["", ""], {}]
       - name: waitgroup-by-value
         severity: error
 
