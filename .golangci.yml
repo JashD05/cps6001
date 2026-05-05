@@ -11,7 +11,7 @@ run:
   timeout: 5m
 
   # Go version to target
-  go: "1.25"
+  go: "1.22"
 
   # List of directories to skip
   skip-dirs:
