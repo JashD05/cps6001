@@ -14,9 +14,9 @@
  * 10. Responsive behaviour (mobile vs desktop)
  */
 
+import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
 import ReportViewer from '@/components/ReportViewer';
 
 // ---------------------------------------------------------------------------

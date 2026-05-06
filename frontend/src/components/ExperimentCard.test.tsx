@@ -6,10 +6,10 @@
  * states, progress display, and tag rendering.
  */
 
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { render, screen, fireEvent } from '@testing-library/react';
+import React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import ExperimentCard, { type ExperimentCardVariant } from '@/components/ExperimentCard';
 import type { Experiment } from '@/types';
 

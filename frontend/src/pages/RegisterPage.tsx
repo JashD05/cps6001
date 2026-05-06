@@ -389,7 +389,7 @@ const RegisterPage: React.FC = () => {
               sx={{ mb: 2, borderRadius: 1.5 }}
               onClose={() => dispatch(clearAuth())}
             >
-              {getErrorMessage()!}
+              {getErrorMessage() ?? ''}
             </Alert>
           </Collapse>
 

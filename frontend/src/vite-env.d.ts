@@ -15,7 +15,7 @@ interface ImportMetaEnv {
   readonly BASE_URL: string;
   /** Whether the app is running in SSR mode */
   readonly SSR: boolean;
-  /** API base URL (defaults to http://localhost:8080/api) */
+  /** API base URL (defaults to /api/v1) */
   readonly VITE_API_BASE_URL: string;
   /** Enable performance measurement in dev */
   readonly VITE_MEASURE_PERF: string;

@@ -62,13 +62,13 @@ import experimentReducer, {
   selectRecentExperiments,
   selectExperimentStats,
 } from '@/store/experimentSlice';
+import type { ExperimentState } from '@/store/experimentSlice';
 import type {
   Experiment,
   ExperimentRun,
   PaginatedResponse,
   CreateExperimentRequest,
 } from '@/types';
-import type { ExperimentState } from '@/store/experimentSlice';
 
 // ---------------------------------------------------------------------------
 // Mocks

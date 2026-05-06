@@ -1282,9 +1282,9 @@ const SettingsPage: React.FC = () => {
             scrollButtons="auto"
             allowScrollButtonsMobile
           >
-            {TAB_CONFIG.map((tab, index) => (
+            {TAB_CONFIG.map((tab) => (
               <Tab
-                key={index}
+                key={tab.label}
                 label={tab.label}
                 icon={tab.icon}
                 iconPosition="start"

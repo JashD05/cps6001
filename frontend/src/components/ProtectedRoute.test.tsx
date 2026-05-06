@@ -9,12 +9,12 @@
  *  5. Auth restoration from stored tokens
  */
 
+import { configureStore } from '@reduxjs/toolkit';
 import { render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import '@testing-library/jest-dom';
 import { Provider } from 'react-redux';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { configureStore } from '@reduxjs/toolkit';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { getAccessToken, getRefreshToken } from '@/services/api';
 import { me, setAuthFromStorage } from '@/store/authSlice';

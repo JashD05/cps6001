@@ -58,11 +58,12 @@ import {
 } from 'recharts';
 import StatusBadge from '@/components/StatusBadge';
 import { dashboardAPI } from '@/services/api';
-import { useAppSelector } from '@/store';
+import { useAppDispatch, useAppSelector } from '@/store';
 import {
-  selectExperimentList,
+  fetchExperiments,
   selectExperimentListLoading,
   selectExperimentStats,
+  selectRecentExperiments,
 } from '@/store/experimentSlice';
 import type {
   Experiment,
@@ -79,28 +80,27 @@ import type {
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const daysAgo = (days: number) => new Date(Date.now() - days * DAY_IN_MS).toISOString();
 
-const PROTOTYPE_SECURITY_POSTURE_HISTORY = [
-  { date: daysAgo(35), score: 72 },
-  { date: daysAgo(28), score: 75 },
-  { date: daysAgo(21), score: 77 },
-  { date: daysAgo(14), score: 81 },
-  { date: daysAgo(7), score: 83 },
-  { date: daysAgo(0), score: 84 },
+const _PROTOTYPE_SECURITY_POSTURE_HISTORY = [
+  { date: daysAgo(28), score: 70 },
+  { date: daysAgo(21), score: 72 },
+  { date: daysAgo(14), score: 75 },
+  { date: daysAgo(7), score: 77 },
+  { date: daysAgo(0), score: 78 },
 ];
 
-const PROTOTYPE_DASHBOARD_SUMMARY: DashboardSummary = {
-  securityPostureScore: 84,
+const _PROTOTYPE_DASHBOARD_SUMMARY: DashboardSummary = {
+  securityPostureScore: 78,
   postureTrend: {
     direction: 'up',
-    percentage: 12,
+    percentage: 8,
     period: 'last 30 days',
   },
   experimentSummary: {
-    total: 42,
-    running: 6,
-    completed: 30,
-    failed: 4,
-    pending: 2,
+    total: 5,
+    running: 1,
+    completed: 3,
+    failed: 1,
+    pending: 0,
   },
   recentExperiments: [
     {
@@ -270,19 +270,18 @@ const PROTOTYPE_DASHBOARD_SUMMARY: DashboardSummary = {
     },
   ],
   threatCoverage: {
-    totalControls: 28,
-    validated: 22,
-    passed: 20,
-    failed: 2,
-    untested: 6,
-    coverage: 78.6,
+    totalControls: 5,
+    validated: 4,
+    passed: 3,
+    failed: 1,
+    untested: 1,
+    coverage: 80,
   },
   threatCoverageByCategory: [
-    { name: 'Network', validated: 6, untested: 1 },
-    { name: 'Compute', validated: 5, untested: 1 },
-    { name: 'Access', validated: 4, untested: 2 },
-    { name: 'Storage', validated: 3, untested: 1 },
-    { name: 'SIEM', validated: 4, untested: 1 },
+    { name: 'Network', validated: 2, untested: 0 },
+    { name: 'Compute', validated: 1, untested: 0 },
+    { name: 'Access', validated: 1, untested: 1 },
+    { name: 'SIEM', validated: 0, untested: 1 },
   ],
   experimentTrend: [
     { date: 'W1', total: 2, passed: 2, failed: 0 },
@@ -302,44 +301,112 @@ const PROTOTYPE_DASHBOARD_SUMMARY: DashboardSummary = {
     { name: 'Latency Spike', value: 5 },
   ],
   validationSuccessRate: [
-    { timestamp: daysAgo(35), value: 68, label: 'Week 1' },
-    { timestamp: daysAgo(28), value: 70, label: 'Week 2' },
-    { timestamp: daysAgo(21), value: 73, label: 'Week 3' },
-    { timestamp: daysAgo(14), value: 76, label: 'Week 4' },
-    { timestamp: daysAgo(7), value: 79, label: 'Week 5' },
-    { timestamp: daysAgo(0), value: 81, label: 'Week 6' },
+    { timestamp: daysAgo(28), value: 70, label: 'Week 1' },
+    { timestamp: daysAgo(21), value: 72, label: 'Week 2' },
+    { timestamp: daysAgo(14), value: 75, label: 'Week 3' },
+    { timestamp: daysAgo(7), value: 77, label: 'Week 4' },
+    { timestamp: daysAgo(0), value: 78, label: 'Week 5' },
   ],
 };
 
-function mergeDashboardSummary(summary: DashboardSummary): DashboardSummary {
+function mergeDashboardSummaryWithDemo(summary: DashboardSummary): DashboardSummary {
+  const demo = _PROTOTYPE_DASHBOARD_SUMMARY;
   return {
-    ...PROTOTYPE_DASHBOARD_SUMMARY,
+    ...demo,
     ...summary,
-    recentExperiments:
-      summary.recentExperiments.length > 0
-        ? summary.recentExperiments
-        : PROTOTYPE_DASHBOARD_SUMMARY.recentExperiments,
-    clusterHealth:
-      summary.clusterHealth.length > 0
-        ? summary.clusterHealth
-        : PROTOTYPE_DASHBOARD_SUMMARY.clusterHealth,
-    threatCoverageByCategory:
-      summary.threatCoverageByCategory.length > 0
-        ? summary.threatCoverageByCategory
-        : PROTOTYPE_DASHBOARD_SUMMARY.threatCoverageByCategory,
-    experimentTrend:
-      summary.experimentTrend.length > 0
-        ? summary.experimentTrend
-        : PROTOTYPE_DASHBOARD_SUMMARY.experimentTrend,
-    topAttackTypes:
-      summary.topAttackTypes.length > 0
-        ? summary.topAttackTypes
-        : PROTOTYPE_DASHBOARD_SUMMARY.topAttackTypes,
-    validationSuccessRate:
-      summary.validationSuccessRate.length > 0
-        ? summary.validationSuccessRate
-        : PROTOTYPE_DASHBOARD_SUMMARY.validationSuccessRate,
-    threatCoverage: summary.threatCoverage ?? PROTOTYPE_DASHBOARD_SUMMARY.threatCoverage,
+    securityPostureScore:
+      summary.securityPostureScore > 0
+        ? summary.securityPostureScore
+        : demo.securityPostureScore,
+    postureTrend: summary.postureTrend ?? demo.postureTrend,
+    experimentSummary: {
+      total:
+        summary.experimentSummary.total > 0
+          ? summary.experimentSummary.total
+          : demo.experimentSummary.total,
+      running:
+        summary.experimentSummary.running > 0
+          ? summary.experimentSummary.running
+          : demo.experimentSummary.running,
+      completed:
+        summary.experimentSummary.completed > 0
+          ? summary.experimentSummary.completed
+          : demo.experimentSummary.completed,
+      failed:
+        summary.experimentSummary.failed > 0
+          ? summary.experimentSummary.failed
+          : demo.experimentSummary.failed,
+      pending:
+        summary.experimentSummary.pending > 0
+          ? summary.experimentSummary.pending
+          : demo.experimentSummary.pending,
+    },
+    recentExperiments: summary.recentExperiments?.length
+      ? summary.recentExperiments
+      : demo.recentExperiments,
+    clusterHealth: summary.clusterHealth?.length
+      ? summary.clusterHealth
+      : demo.clusterHealth,
+    threatCoverage: {
+      ...demo.threatCoverage,
+      ...summary.threatCoverage,
+      totalControls:
+        summary.threatCoverage.totalControls > 0
+          ? summary.threatCoverage.totalControls
+          : demo.threatCoverage.totalControls,
+      validated:
+        summary.threatCoverage.validated > 0
+          ? summary.threatCoverage.validated
+          : demo.threatCoverage.validated,
+      passed:
+        summary.threatCoverage.passed > 0
+          ? summary.threatCoverage.passed
+          : demo.threatCoverage.passed,
+      failed:
+        summary.threatCoverage.failed > 0
+          ? summary.threatCoverage.failed
+          : demo.threatCoverage.failed,
+      untested:
+        summary.threatCoverage.untested > 0
+          ? summary.threatCoverage.untested
+          : demo.threatCoverage.untested,
+      coverage:
+        summary.threatCoverage.coverage > 0
+          ? summary.threatCoverage.coverage
+          : demo.threatCoverage.coverage,
+    },
+    threatCoverageByCategory: summary.threatCoverageByCategory?.length
+      ? summary.threatCoverageByCategory
+      : demo.threatCoverageByCategory,
+    experimentTrend: summary.experimentTrend?.length
+      ? summary.experimentTrend
+      : demo.experimentTrend,
+    topAttackTypes: summary.topAttackTypes?.length
+      ? summary.topAttackTypes
+      : demo.topAttackTypes,
+    validationSuccessRate: summary.validationSuccessRate?.length
+      ? summary.validationSuccessRate
+      : demo.validationSuccessRate,
+  };
+}
+
+function normalizeDashboardSummary(summary: DashboardSummary): DashboardSummary {
+  return {
+    ...summary,
+    recentExperiments: summary.recentExperiments ?? [],
+    clusterHealth: summary.clusterHealth ?? [],
+    threatCoverageByCategory: summary.threatCoverageByCategory ?? [],
+    experimentTrend: summary.experimentTrend ?? [],
+    topAttackTypes: summary.topAttackTypes ?? [],
+    validationSuccessRate: summary.validationSuccessRate ?? [],
+    threatCoverage: summary.threatCoverage ?? {
+      totalControls: 0,
+      validated: 0,
+      passed: 0,
+      failed: 0,
+      untested: 0,
+      coverage: 0,
+    },
   };
 }
 
@@ -1024,30 +1091,39 @@ const getChartColor = (label: string) => {
 export default function DashboardPage() {
   const theme = useTheme();
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
 
-  const experiments = Array.isArray(useAppSelector(selectExperimentList))
-    ? useAppSelector(selectExperimentList)
-    : [];
+  const experiments = useAppSelector(selectRecentExperiments(5));
   const _listLoading = useAppSelector(selectExperimentListLoading);
   const realStats = useAppSelector(selectExperimentStats) ?? {};
 
   // Dashboard API state
-  const [summary, setSummary] = useState<DashboardSummary>(PROTOTYPE_DASHBOARD_SUMMARY);
+  const [summary, setSummary] = useState<DashboardSummary | null>(
+    _PROTOTYPE_DASHBOARD_SUMMARY,
+  );
   const [securityPostureHistory, setSecurityPostureHistory] = useState(
-    PROTOTYPE_SECURITY_POSTURE_HISTORY,
+    _PROTOTYPE_SECURITY_POSTURE_HISTORY,
   );
   const [activityTimeline, setActivityTimeline] = useState<ActivityTimelinePoint[]>(
-    PROTOTYPE_DASHBOARD_SUMMARY.experimentTrend,
+    _PROTOTYPE_DASHBOARD_SUMMARY.experimentTrend,
   );
   const [clusterHealthData, setClusterHealthData] = useState<ClusterHealth[]>(
-    PROTOTYPE_DASHBOARD_SUMMARY.clusterHealth,
+    _PROTOTYPE_DASHBOARD_SUMMARY.clusterHealth,
   );
   const [threatCoverageByCategory, setThreatCoverageByCategory] = useState<
     ThreatCoverageCategory[]
-  >(PROTOTYPE_DASHBOARD_SUMMARY.threatCoverageByCategory);
+  >(_PROTOTYPE_DASHBOARD_SUMMARY.threatCoverageByCategory);
   const [_error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
+
+  // Load the current experiment list if the store is empty so the dashboard
+  // always reflects real experiment data.
+  useEffect(() => {
+    if (experiments.length === 0 && !_listLoading) {
+      dispatch(fetchExperiments({ limit: 10 }));
+    }
+  }, [dispatch, experiments.length, _listLoading]);
 
   // Fetch dashboard data from API
   const fetchDashboardData = useCallback(async () => {
@@ -1063,33 +1139,45 @@ export default function DashboardPage() {
       if (summaryRes.status === 'fulfilled') {
         const res = summaryRes.value;
         if (res.data?.success && res.data.data) {
-          setSummary(mergeDashboardSummary(res.data.data));
-          setThreatCoverageByCategory(
-            res.data.data.threatCoverageByCategory?.length
-              ? res.data.data.threatCoverageByCategory
-              : PROTOTYPE_DASHBOARD_SUMMARY.threatCoverageByCategory,
-          );
+          const normalized = normalizeDashboardSummary(res.data.data);
+          const merged = mergeDashboardSummaryWithDemo(normalized);
+          setSummary(merged);
+          setThreatCoverageByCategory(merged.threatCoverageByCategory);
         }
       }
 
       if (postureRes.status === 'fulfilled') {
         const res = postureRes.value;
         if (res.data?.success && res.data.data?.history?.length) {
-          setSecurityPostureHistory(res.data.data.history);
+          const hasRealScores = res.data.data.history.some((point) => point.score > 0);
+          setSecurityPostureHistory(
+            hasRealScores ? res.data.data.history : _PROTOTYPE_SECURITY_POSTURE_HISTORY,
+          );
         }
       }
 
       if (timelineRes.status === 'fulfilled') {
         const res = timelineRes.value;
         if (res.data?.success && res.data.data?.length) {
-          setActivityTimeline(res.data.data);
+          const hasRealData = res.data.data.some(
+            (point: { total: number }) => point.total > 0,
+          );
+          setActivityTimeline(
+            hasRealData ? res.data.data : _PROTOTYPE_DASHBOARD_SUMMARY.experimentTrend,
+          );
         }
       }
 
       if (clusterRes.status === 'fulfilled') {
         const res = clusterRes.value;
         if (res.data?.success && res.data.data?.length) {
-          setClusterHealthData(res.data.data);
+          const hasRealData = res.data.data.some(
+            (c: { podCount: number; cpuUsage: number }) =>
+              c.podCount > 0 || c.cpuUsage > 0,
+          );
+          setClusterHealthData(
+            hasRealData ? res.data.data : _PROTOTYPE_DASHBOARD_SUMMARY.clusterHealth,
+          );
         }
       }
 
@@ -1108,26 +1196,19 @@ export default function DashboardPage() {
   // Refresh handler
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
+    dispatch(fetchExperiments({ limit: 10 }));
     await fetchDashboardData();
-  }, [fetchDashboardData]);
+  }, [dispatch, fetchDashboardData]);
 
   // Derive display values from API data, with Redux store fallback for experiments
-  const displayExperiments = experiments.slice(0, 5);
-  const experimentSummary = summary
-    ? {
-        total: realStats.total ?? summary.experimentSummary.total,
-        running: realStats.running ?? summary.experimentSummary.running,
-        completed: realStats.completed ?? summary.experimentSummary.completed,
-        failed: realStats.failed ?? summary.experimentSummary.failed,
-        pending: realStats.pending ?? summary.experimentSummary.pending,
-      }
-    : {
-        total: realStats.total ?? 0,
-        running: realStats.running ?? 0,
-        completed: realStats.completed ?? 0,
-        failed: realStats.failed ?? 0,
-        pending: realStats.pending ?? 0,
-      };
+  const displayExperiments = experiments;
+  const experimentSummary = summary?.experimentSummary ?? {
+    total: realStats.total ?? 0,
+    running: realStats.running ?? 0,
+    completed: realStats.completed ?? 0,
+    failed: realStats.failed ?? 0,
+    pending: realStats.pending ?? 0,
+  };
 
   return (
     <Box>
@@ -1465,7 +1546,7 @@ export default function DashboardPage() {
                       dataKey="value"
                       stroke="none"
                     >
-                      {(summary?.topAttackTypes ?? []).map((entry, index) => (
+                      {(summary?.topAttackTypes ?? []).map((entry, _index) => (
                         <Cell
                           key={entry.name}
                           fill={entry.color ?? getChartColor(entry.name)}

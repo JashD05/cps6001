@@ -365,7 +365,7 @@ const LogViewer: React.FC<LogViewerProps> = ({
           ) : (
             logs.map((line, index) => (
               <Box
-                key={`${index}-${line.substring(0, 20)}`}
+                key={line}
                 component="pre"
                 sx={{
                   margin: 0,
@@ -500,8 +500,8 @@ const ResultsSummary: React.FC<ResultsSummaryProps> = ({ result }) => {
               Details
             </Typography>
             <List disablePadding dense>
-              {result.details.map((detail, idx) => (
-                <ListItem key={idx} sx={{ py: 0.5, px: 0 }}>
+              {result.details.map((detail) => (
+                <ListItem key={detail} sx={{ py: 0.5, px: 0 }}>
                   <ListItemIcon sx={{ minWidth: 28 }}>
                     <CircleIcon sx={{ fontSize: 6, color: 'primary.main' }} />
                   </ListItemIcon>
@@ -727,8 +727,8 @@ const SIEMValidationSection: React.FC<SIEMValidationProps> = ({ validation }) =>
               Validation Notes
             </Typography>
             <List disablePadding dense>
-              {validation.details.map((detail, idx) => (
-                <ListItem key={idx} sx={{ py: 0.25, px: 0 }}>
+              {validation.details.map((detail) => (
+                <ListItem key={detail} sx={{ py: 0.25, px: 0 }}>
                   <ListItemIcon sx={{ minWidth: 28 }}>
                     <CircleIcon sx={{ fontSize: 6, color: 'text.secondary' }} />
                   </ListItemIcon>
@@ -899,9 +899,10 @@ const ExperimentDetailPage: React.FC = () => {
 
   const isCompleted = experiment.status === 'completed';
   const isFailed = experiment.status === 'failed';
-  const hasResult = experiment.result !== undefined && experiment.result !== null;
-  const hasSIEMValidation = hasResult && experiment.result!.siemValidation !== undefined;
   const hasOutcome = isCompleted || isFailed;
+  const hasResult = experiment.result != null;
+  const siemValidation = experiment.result?.siemValidation;
+  const hasSIEMValidation = hasOutcome && siemValidation !== undefined;
 
   // ---------------------------------------------------------------------------
   // Render
@@ -1082,9 +1083,9 @@ const ExperimentDetailPage: React.FC = () => {
       {/* Outcome — results shown inline when available                     */}
       {/* ----------------------------------------------------------------- */}
 
-      {hasOutcome && hasResult ? (
+      {hasOutcome && hasResult && experiment.result ? (
         <Box sx={{ mb: 3 }}>
-          <ResultsSummary result={experiment.result!} />
+          <ResultsSummary result={experiment.result} />
         </Box>
       ) : hasOutcome && !hasResult ? (
         <Paper
@@ -1151,10 +1152,12 @@ const ExperimentDetailPage: React.FC = () => {
                           ? { clusterId: experiment.clusterId }
                           : undefined,
                       );
-                      const count = (res.data?.data as any)?.cancelled_count ?? 0;
+                      const count =
+                        (res.data?.data as { cancelled_count?: number } | undefined)
+                          ?.cancelled_count ?? 0;
                       if (count > 0) {
                         dispatch(resetExecuteStatus());
-                        dispatch(fetchExperimentById(id!));
+                        if (id) dispatch(fetchExperimentById(id));
                       }
                       alert(
                         count > 0
@@ -1194,9 +1197,9 @@ const ExperimentDetailPage: React.FC = () => {
       )}
 
       {/* SIEM Validation — shown inline when data exists */}
-      {hasSIEMValidation && (
+      {hasSIEMValidation && siemValidation && (
         <Box sx={{ mb: 3 }}>
-          <SIEMValidationSection validation={experiment.result!.siemValidation} />
+          <SIEMValidationSection validation={siemValidation} />
         </Box>
       )}
 

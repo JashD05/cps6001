@@ -151,7 +151,10 @@ export class WebSocketClient {
       this.eventHandlers.set(eventType, new Set());
     }
     const typedHandler = handler as WSEventHandler;
-    this.eventHandlers.get(eventType)!.add(typedHandler);
+    const handlers = this.eventHandlers.get(eventType);
+    if (handlers) {
+      handlers.add(typedHandler);
+    }
 
     return () => {
       this.eventHandlers.get(eventType)?.delete(typedHandler);

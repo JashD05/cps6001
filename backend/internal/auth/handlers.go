@@ -68,10 +68,10 @@ func parsePermissions(raw json.RawMessage) []string {
 func (h *Handler) LoginHandler(c *gin.Context) {
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Debug("invalid login request body", zap.Error(err))
+		h.logger.Warn("invalid login request body", zap.Error(err))
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error:   "invalid_request",
-			Message: "Invalid request body. Email and password are required.",
+			Message: fmt.Sprintf("Invalid request body: %s", err.Error()),
 			Code:    http.StatusBadRequest,
 		})
 		return

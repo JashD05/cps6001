@@ -41,7 +41,7 @@ import {
   Grid,
   type SelectChangeEvent,
 } from '@mui/material';
-import React, { useEffect, useCallback, useMemo, useState } from 'react';
+import React, { useEffect, useCallback, useMemo, useState, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import StatusBadge from '@/components/StatusBadge';
 import { experimentsAPI } from '@/services/api';
@@ -186,24 +186,34 @@ const canStopExperiment = (status: ExperimentStatus): boolean =>
 const TableSkeleton: React.FC<{ rows?: number; columns?: number }> = ({
   rows = 5,
   columns = 6,
-}) => (
-  <>
-    {Array.from({ length: rows }).map((_, rowIdx) => (
-      <TableRow key={`skeleton-${rowIdx}`}>
-        {Array.from({ length: columns }).map((_, colIdx) => (
-          <TableCell key={`skeleton-${rowIdx}-${colIdx}`}>
-            <Skeleton
-              variant="rounded"
-              height={20}
-              width={colIdx === 0 ? '70%' : '50%'}
-              animation="wave"
-            />
-          </TableCell>
-        ))}
-      </TableRow>
-    ))}
-  </>
-);
+}) => {
+  const rowKeys = useMemo(
+    () => Array.from({ length: rows }, () => crypto.randomUUID()),
+    [rows],
+  );
+  const colKeys = useMemo(
+    () => Array.from({ length: columns }, () => crypto.randomUUID()),
+    [columns],
+  );
+  return (
+    <>
+      {rowKeys.map((rowKey, _rowIdx) => (
+        <TableRow key={rowKey}>
+          {colKeys.map((colKey, colIdx) => (
+            <TableCell key={`${rowKey}-${colKey}`}>
+              <Skeleton
+                variant="rounded"
+                height={20}
+                width={colIdx === 0 ? '70%' : '50%'}
+                animation="wave"
+              />
+            </TableCell>
+          ))}
+        </TableRow>
+      ))}
+    </>
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Experiment Row Component
@@ -218,7 +228,7 @@ interface ExperimentRowProps {
   stopping: boolean;
 }
 
-const ExperimentRow: React.FC<ExperimentRowProps> = React.memo(
+const ExperimentRow: React.FC<ExperimentRowProps> = memo(
   ({ experiment, onView, onRun, onStop, executing, stopping }) => {
     const navigate = useNavigate();
 
@@ -793,7 +803,9 @@ const ExperimentListPage: React.FC = () => {
                 onClick={async () => {
                   try {
                     const res = await experimentsAPI.cancelStaleRuns();
-                    const count = (res.data?.data as any)?.cancelled_count ?? 0;
+                    const count =
+                      (res.data?.data as { cancelled_count?: number })?.cancelled_count ??
+                      0;
                     if (count > 0) {
                       dispatch(resetExecuteStatus());
                       await dispatch(

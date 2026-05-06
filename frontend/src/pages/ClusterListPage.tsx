@@ -66,6 +66,12 @@ import type { AppDispatch } from '@/store';
 import type { Cluster, ClusterStatus, ClusterHealth } from '@/types';
 
 // ---------------------------------------------------------------------------
+// Module-level constants
+// ---------------------------------------------------------------------------
+
+const SKELETON_CLUSTER_IDS = ['sc-1', 'sc-2', 'sc-3', 'sc-4', 'sc-5', 'sc-6'];
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -1281,11 +1287,11 @@ const ClusterListPage: React.FC = () => {
       {/* Clusters Grid */}
       {isLoading && clusters.length === 0 ? (
         <Grid container spacing={2.5}>
-          {Array.from({ length: 6 }).map((_, idx) => (
-            <Grid item xs={12} sm={6} lg={4} key={idx}>
+          {SKELETON_CLUSTER_IDS.map((skeletonId) => (
+            <Grid item xs={12} sm={6} lg={4} key={skeletonId}>
               <ClusterCard
                 cluster={{
-                  id: `skeleton-${idx}`,
+                  id: skeletonId,
                   name: '',
                   description: '',
                   status: 'unknown' as ClusterStatus,

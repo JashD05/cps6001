@@ -62,11 +62,32 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { reportsAPI } from '@/services/api';
-import type { Report, ReportFormat } from '@/types';
+import type { Report, ReportFormat, ReportType } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/** Raw API report data (supports both snake_case and camelCase from backend) */
+interface ApiReportData {
+  id: string;
+  title?: string;
+  type?: string;
+  description?: string;
+  experiment_ids?: string[];
+  experimentIds?: string[];
+  date_range?: { from?: string; to?: string };
+  dateRange?: { from?: string; to?: string };
+  status?: string;
+  download_url?: string;
+  downloadUrl?: string;
+  file_size?: number;
+  fileSize?: number;
+  generated_by?: string;
+  generatedBy?: string;
+  created_at?: string;
+  createdAt?: string;
+}
 
 export interface ReportViewerProps {
   /** Whether the viewer is open */
@@ -351,8 +372,8 @@ const LoadingSkeleton: React.FC = () => (
       <Skeleton variant="text" width="40%" height={20} />
       <Divider sx={{ my: 2 }} />
       <Stack direction="row" spacing={3}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Box key={i} sx={{ flex: 1 }}>
+        {['stat-a', 'stat-b', 'stat-c', 'stat-d'].map((key) => (
+          <Box key={key} sx={{ flex: 1 }}>
             <Skeleton variant="rounded" height={100} sx={{ borderRadius: 2 }} />
           </Box>
         ))}
@@ -920,12 +941,13 @@ const ReportViewer: React.FC<ReportViewerProps> = ({
 
     try {
       const response = await reportsAPI.getById(reportId);
-      const apiReport = (response as { data?: { data?: any } } | undefined)?.data?.data;
+      const apiReport = (response as { data?: { data?: ApiReportData } } | undefined)
+        ?.data?.data;
       const fetchedReport: Report = apiReport
         ? {
             id: apiReport.id,
             title: apiReport.title ?? 'DNS Exfiltration Attack Simulation',
-            type: apiReport.type ?? 'experiment',
+            type: (apiReport.type ?? 'experiment') as ReportType,
             format: reportFormat,
             description:
               apiReport.description ??
@@ -937,7 +959,7 @@ const ReportViewer: React.FC<ReportViewerProps> = ({
                 apiReport.date_range?.from ?? apiReport.dateRange?.from ?? '2024-01-20',
               to: apiReport.date_range?.to ?? apiReport.dateRange?.to ?? '2024-01-20',
             },
-            status: apiReport.status ?? 'ready',
+            status: (apiReport.status ?? 'ready') as Report['status'],
             downloadUrl:
               apiReport.download_url ??
               apiReport.downloadUrl ??

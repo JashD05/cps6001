@@ -57,13 +57,18 @@ import {
   Avatar,
   useTheme,
 } from '@mui/material';
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import StatusBadge from '@/components/StatusBadge';
 import { reportsAPI, experimentsAPI, getErrorMessage } from '@/services/api';
-
 import { normalizeReport } from '@/types';
-import type { Experiment, Report, ReportType, ReportFormat } from '@/types';
+import type {
+  Experiment,
+  Report,
+  ReportType,
+  ReportFormat,
+  ReportBackend,
+} from '@/types';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -385,7 +390,7 @@ interface ReportRowProps {
   onShare: (report: Report) => void;
 }
 
-const ReportRow: React.FC<ReportRowProps> = React.memo(
+const ReportRow: React.FC<ReportRowProps> = memo(
   ({ report, onDownload, onDelete, onShare }) => {
     const theme = useTheme();
 
@@ -873,44 +878,65 @@ const DeleteDialog: React.FC<DeleteDialogProps> = ({
 // Skeleton Loader
 // ---------------------------------------------------------------------------
 
-const TableSkeleton: React.FC<{ rows?: number }> = ({ rows = 5 }) => (
-  <>
-    {Array.from({ length: rows }).map((_, rowIdx) => (
-      <TableRow key={`skeleton-${rowIdx}`}>
-        <TableCell>
-          <Stack direction="row" spacing={1.5} alignItems="center">
-            <Skeleton variant="rounded" width={36} height={36} sx={{ borderRadius: 1 }} />
-            <Box sx={{ flex: 1 }}>
-              <Skeleton variant="text" width="70%" />
-              <Skeleton variant="text" width="40%" height={14} />
-            </Box>
-          </Stack>
-        </TableCell>
-        <TableCell>
-          <Skeleton variant="rounded" width={80} height={24} sx={{ borderRadius: 12 }} />
-        </TableCell>
-        <TableCell>
-          <Skeleton variant="text" width={40} />
-        </TableCell>
-        <TableCell>
-          <Skeleton variant="rounded" width={70} height={20} sx={{ borderRadius: 12 }} />
-        </TableCell>
-        <TableCell>
-          <Skeleton variant="text" width={60} />
-        </TableCell>
-        <TableCell>
-          <Skeleton variant="text" width={120} />
-        </TableCell>
-        <TableCell>
-          <Skeleton variant="text" width={80} />
-        </TableCell>
-        <TableCell>
-          <Skeleton variant="rounded" width={80} height={28} sx={{ borderRadius: 1 }} />
-        </TableCell>
-      </TableRow>
-    ))}
-  </>
-);
+const TableSkeleton: React.FC<{ rows?: number }> = ({ rows = 5 }) => {
+  const rowKeys = useMemo(
+    () => Array.from({ length: rows }, () => crypto.randomUUID()),
+    [rows],
+  );
+  return (
+    <>
+      {rowKeys.map((rowKey) => (
+        <TableRow key={rowKey}>
+          <TableCell>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Skeleton
+                variant="rounded"
+                width={36}
+                height={36}
+                sx={{ borderRadius: 1 }}
+              />
+              <Box sx={{ flex: 1 }}>
+                <Skeleton variant="text" width="70%" />
+                <Skeleton variant="text" width="40%" height={14} />
+              </Box>
+            </Stack>
+          </TableCell>
+          <TableCell>
+            <Skeleton
+              variant="rounded"
+              width={80}
+              height={24}
+              sx={{ borderRadius: 12 }}
+            />
+          </TableCell>
+          <TableCell>
+            <Skeleton variant="text" width={40} />
+          </TableCell>
+          <TableCell>
+            <Skeleton
+              variant="rounded"
+              width={70}
+              height={20}
+              sx={{ borderRadius: 12 }}
+            />
+          </TableCell>
+          <TableCell>
+            <Skeleton variant="text" width={60} />
+          </TableCell>
+          <TableCell>
+            <Skeleton variant="text" width={120} />
+          </TableCell>
+          <TableCell>
+            <Skeleton variant="text" width={80} />
+          </TableCell>
+          <TableCell>
+            <Skeleton variant="rounded" width={80} height={28} sx={{ borderRadius: 1 }} />
+          </TableCell>
+        </TableRow>
+      ))}
+    </>
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Main Page Component
@@ -1080,7 +1106,7 @@ const ReportsPage: React.FC = () => {
       const response = await reportsAPI.list();
       const items = response?.data?.items || [];
       if (Array.isArray(items) && items.length > 0) {
-        setReports(items.map((r: any) => normalizeReport(r)));
+        setReports(items.map((r: ReportBackend) => normalizeReport(r)));
         return;
       }
 

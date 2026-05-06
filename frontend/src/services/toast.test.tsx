@@ -549,7 +549,8 @@ describe('ToastProvider – manual dismiss', () => {
     // Add a toast and capture its ID.
     let toastId = '';
     await act(async () => {
-      toastId = toastContext!.showToast({
+      if (!toastContext) throw new Error('toastContext not available');
+      toastId = toastContext.showToast({
         severity: 'info',
         message: 'Dismissible',
         duration: 0,
@@ -560,7 +561,8 @@ describe('ToastProvider – manual dismiss', () => {
 
     // Dismiss it by ID.
     await act(async () => {
-      toastContext!.dismissToast(toastId);
+      if (!toastContext) throw new Error('toastContext not available');
+      toastContext.dismissToast(toastId);
     });
 
     expect(screen.getByTestId('toast-count')).toHaveTextContent('0');
@@ -626,14 +628,16 @@ describe('ToastProvider – manual dismiss', () => {
 
     let toastId = '';
     await act(async () => {
-      toastId = toastContext!.showToast({ severity: 'info', message: 'Timer test' });
+      if (!toastContext) throw new Error('toastContext not available');
+      toastId = toastContext.showToast({ severity: 'info', message: 'Timer test' });
     });
 
     expect(screen.getByTestId('toast-count')).toHaveTextContent('1');
 
     // Manually dismiss before the timer fires.
     await act(async () => {
-      toastContext!.dismissToast(toastId);
+      if (!toastContext) throw new Error('toastContext not available');
+      toastContext.dismissToast(toastId);
     });
 
     expect(screen.getByTestId('toast-count')).toHaveTextContent('0');

@@ -144,7 +144,7 @@ export const logout = createAsyncThunk<void, void>(
     try {
       await authAPI.logout();
       clearTokens();
-      return;
+      return; // eslint-disable-line no-useless-return -- consistent return with catch
     } catch (error: unknown) {
       // Even if the server logout fails, clear local tokens
       clearTokens();

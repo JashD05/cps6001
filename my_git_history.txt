@@ -1,0 +1,12 @@
+2026-05-05 | 5e27b36 | Fix remaining TODOs and complete project
+2026-05-05 | 9ff00b8 | Add prototype dashboard data and lint cleanup
+2026-05-05 | 1d87e6a | fix: correct Go version in golangci.yml from 1.25 to 1.22
+2026-05-05 | 2b2d861 | Improve frontend test robustness and status handling
+2026-05-05 | 6d2ec45 | Fix CI lint and frontend test configuration
+2026-05-05 | 869a2d6 | CI: Align Go version and enable TypeScript parser for ESLint
+2026-05-05 | 11d67b4 | Fix: Increase max concurrent experiments limit
+2026-05-05 | dfa93d3 | feat: simulate experiment execution synchronously in ExecuteExperiment handler
+2026-05-05 | bf0bad6 | fix: allow re-run from any non-running experiment status
+2026-05-04 | 95b00ed | refactor: simplify ExperimentDetailPage to read-only outcome view
+2026-05-04 | 6d0c508 | feat: rewrite ExperimentDetailPage + wire up Register, Search, Reports
+2026-04-28 | 822651d | Initial commit

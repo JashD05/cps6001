@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -244,6 +245,54 @@ func TestLoginHandler_WrongPassword(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLoginHandler_AllowsShortPasswords(t *testing.T) {
+	db, mock := setupTestDB(t)
+	cfg := setupTestConfig()
+	logger := zap.NewNop()
+
+	handler, err := NewHandler(db, nil, cfg, logger)
+	require.NoError(t, err)
+
+	const adminEmail = "admin@chaos-sec.local"
+	const adminPasswordHash = "$2a$10$m2.lZ4BkDSPquIZSvdhnJOjJ2Rw6LCZOaDodirQXXk.65vpM45VNi"
+
+	mock.ExpectQuery("(?s)SELECT u\\.id.*FROM users u JOIN roles r.*WHERE u\\.email").
+		WithArgs(adminEmail).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "email", "password_hash", "name", "organization_id",
+			"role_id", "is_active", "last_login_at", "created_at", "updated_at",
+			"role_name", "permissions",
+		}).AddRow(
+			testUserID.String(), adminEmail, adminPasswordHash, testName,
+			testOrgID.String(), testRoleID.String(), true,
+			testNow, testNow, testNow,
+			testRoleName, []byte(testPermissions),
+		))
+
+	mock.ExpectExec("UPDATE users SET last_login_at").
+		WithArgs(testUserID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	router := setupTestRouter()
+	router.POST("/api/v1/auth/login", handler.LoginHandler)
+
+	body := models.LoginRequest{Email: adminEmail, Password: "admin"}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", makeRequestBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp models.TokenResponse
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.AccessToken)
+	assert.NotEmpty(t, resp.RefreshToken)
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestLoginHandler_InactiveAccount(t *testing.T) {
 	db, mock := setupTestDB(t)
 	cfg := setupTestConfig()
@@ -314,12 +363,7 @@ func TestLoginHandler_MissingFields(t *testing.T) {
 			wantStatus:  http.StatusBadRequest,
 			wantErrCode: "invalid_request",
 		},
-		{
-			name:        "password too short",
-			body:        map[string]interface{}{"email": "test@example.com", "password": "short"},
-			wantStatus:  http.StatusBadRequest,
-			wantErrCode: "invalid_request",
-		},
+
 		{
 			name:        "invalid email format",
 			body:        map[string]interface{}{"email": "not-an-email", "password": "securepassword123"},
@@ -1047,7 +1091,7 @@ func TestRefreshHandler_BlacklistedToken(t *testing.T) {
 
 	// Blacklist the token in Redis before the request
 	blacklistKey := fmt.Sprintf("token:blacklist:%s", refreshClaims.ID)
-	rdb.Set(nil, blacklistKey, "1", time.Hour)
+	rdb.Set(context.Background(), blacklistKey, "1", time.Hour)
 
 	router := setupTestRouter()
 	router.POST("/api/v1/auth/refresh", handler.RefreshHandler)

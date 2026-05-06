@@ -979,7 +979,7 @@ const CreateExperimentPage: React.FC = () => {
   }, []);
 
   const handleCreate = useCallback(async () => {
-    if (!selectedTemplate || !wizard.clusterId) return;
+    if (!selectedTemplate || !wizard.clusterId || !wizard.selectedTemplateId) return;
 
     launchCancelRef.current = false;
     setLaunchState('idle');
@@ -989,7 +989,7 @@ const CreateExperimentPage: React.FC = () => {
     const request: CreateExperimentRequest = {
       name: wizard.name.trim(),
       description: wizard.description.trim(),
-      templateId: wizard.selectedTemplateId!,
+      templateId: wizard.selectedTemplateId,
       clusterId: wizard.clusterId,
       namespace: wizard.namespace,
       parameters: wizard.parameters,
@@ -1116,7 +1116,7 @@ const CreateExperimentPage: React.FC = () => {
     (tag: string) => {
       updateWizard({ tags: wizard.tags.filter((t) => t !== tag) });
     },
-    [updateWizard],
+    [updateWizard, wizard.tags],
   );
 
   const handleAddCustomRule = useCallback(() => {
@@ -2083,8 +2083,12 @@ const CreateExperimentPage: React.FC = () => {
               Expected Detections (from template)
             </Typography>
             <Stack spacing={1}>
-              {selectedTemplate.expectedDetections.map((det, idx) => (
-                <Paper key={idx} variant="outlined" sx={{ p: 1.5, borderRadius: 1.5 }}>
+              {selectedTemplate.expectedDetections.map((det, _idx) => (
+                <Paper
+                  key={`${det.source}-${det.type}`}
+                  variant="outlined"
+                  sx={{ p: 1.5, borderRadius: 1.5 }}
+                >
                   <Stack
                     direction="row"
                     justifyContent="space-between"

@@ -500,20 +500,19 @@ describe('Auth Flow Integration', () => {
       expect(mockedAuthAPI.login).not.toHaveBeenCalled();
     });
 
-    it('does not call the API when the password is too short', async () => {
+    it('allows the default admin password to reach the API', async () => {
       const { user } = renderLoginPage();
 
-      await user.type(screen.getByLabelText(/email address/i), 'admin@chaos-sec.io');
-      await user.type(screen.getByLabelText(/^password$/i), 'short');
+      await user.type(screen.getByLabelText(/email address/i), 'admin@chaos-sec.local');
+      await user.type(screen.getByLabelText(/^password$/i), 'admin');
       await user.click(screen.getByRole('button', { name: /sign in/i }));
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/password must be at least 8 characters/i),
-        ).toBeInTheDocument();
+        expect(mockedAuthAPI.login).toHaveBeenCalledWith({
+          email: 'admin@chaos-sec.local',
+          password: 'admin',
+        });
       });
-
-      expect(mockedAuthAPI.login).not.toHaveBeenCalled();
     });
 
     it('does not call the API when fields are empty', async () => {

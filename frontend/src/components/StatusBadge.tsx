@@ -3,17 +3,17 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloudOffIcon from '@mui/icons-material/CloudOff';
 import ErrorIcon from '@mui/icons-material/Error';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import PauseIcon from '@mui/icons-material/Pause';
 import PendingIcon from '@mui/icons-material/Pending';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import StopIcon from '@mui/icons-material/Stop';
-import WarningIcon from '@mui/icons-material/Warning';
-import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import SearchIcon from '@mui/icons-material/Search';
 import SecurityIcon from '@mui/icons-material/Security';
+import StopIcon from '@mui/icons-material/Stop';
+import WarningIcon from '@mui/icons-material/Warning';
 import { Box, Chip, Tooltip, Typography, type SxProps, type Theme } from '@mui/material';
-import React from 'react';
+import React, { memo } from 'react';
 
 // ---------------------------------------------------------------------------
 // Status Type Mappings
@@ -670,4 +670,4 @@ export const getStatusConfig = (
 // Memoized export
 // ---------------------------------------------------------------------------
 
-export default React.memo(StatusBadge);
+export default memo(StatusBadge);

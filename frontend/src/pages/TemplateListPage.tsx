@@ -46,9 +46,7 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-
 import { templatesAPI, getErrorMessage } from '@/services/api';
-
 import type {
   AttackTemplate,
   TemplateCategory,
@@ -59,6 +57,8 @@ import type {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+const SKELETON_TEMPLATE_IDS = ['st-1', 'st-2', 'st-3', 'st-4', 'st-5', 'st-6'];
 
 const CATEGORY_CONFIG: Record<
   TemplateCategory,
@@ -1582,8 +1582,8 @@ const TemplateListPage: React.FC = () => {
       {/* Template Content */}
       {isLoading ? (
         <Grid container spacing={2.5}>
-          {Array.from({ length: 6 }).map((_, idx) => (
-            <Grid item xs={12} sm={6} md={4} lg={3} key={`skeleton-${idx}`}>
+          {SKELETON_TEMPLATE_IDS.map((id) => (
+            <Grid item xs={12} sm={6} md={4} lg={3} key={id}>
               <TemplateCardSkeleton />
             </Grid>
           ))}
@@ -1819,8 +1819,12 @@ const TemplateListPage: React.FC = () => {
                 Attack Phases
               </Typography>
               <Stack spacing={1} mb={3}>
-                {selectedTemplate.attackPhases.map((phase, idx) => (
-                  <Paper key={idx} variant="outlined" sx={{ p: 1.5, borderRadius: 1.5 }}>
+                {selectedTemplate.attackPhases.map((phase) => (
+                  <Paper
+                    key={phase.name}
+                    variant="outlined"
+                    sx={{ p: 1.5, borderRadius: 1.5 }}
+                  >
                     <Stack
                       direction="row"
                       justifyContent="space-between"
@@ -1854,8 +1858,12 @@ const TemplateListPage: React.FC = () => {
                 Expected Detections
               </Typography>
               <Stack spacing={1} mb={3}>
-                {selectedTemplate.expectedDetections.map((detection, idx) => (
-                  <Paper key={idx} variant="outlined" sx={{ p: 1.5, borderRadius: 1.5 }}>
+                {selectedTemplate.expectedDetections.map((detection) => (
+                  <Paper
+                    key={`${detection.source}-${detection.type}`}
+                    variant="outlined"
+                    sx={{ p: 1.5, borderRadius: 1.5 }}
+                  >
                     <Stack direction="row" spacing={1} alignItems="flex-start">
                       <SecurityIcon
                         sx={{ fontSize: 16, color: 'success.main', mt: 0.25 }}

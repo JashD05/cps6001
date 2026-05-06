@@ -6,9 +6,9 @@
  * session expired message.
  */
 
+import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
 import LoginPage from '@/pages/LoginPage';
 import { login, clearAuth, clearError } from '@/store/authSlice';
 import type { AuthState } from '@/types';
@@ -110,7 +110,7 @@ describe('LoginPage – form rendering', () => {
 
   it('renders the password input field', () => {
     renderLoginPage();
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
     expect(passwordInput).toBeInTheDocument();
     expect(passwordInput).toHaveAttribute('type', 'password');
   });
@@ -143,7 +143,7 @@ describe('LoginPage – form rendering', () => {
   it('renders the email field with autoFocus', () => {
     renderLoginPage();
     const emailInput = screen.getByLabelText(/email address/i);
-    expect(emailInput).toHaveAttribute('autofocus');
+    expect(emailInput).toHaveFocus();
   });
 
   it('renders the OR divider', () => {
@@ -193,19 +193,22 @@ describe('LoginPage – form validation', () => {
     });
   });
 
-  it('shows "Password must be at least 8 characters" for short password', async () => {
+  it('allows short passwords so the default admin credential works', async () => {
     renderLoginPage();
 
-    const passwordInput = screen.getByLabelText(/password/i);
-    fireEvent.change(passwordInput, { target: { value: 'short' } });
+    const emailInput = screen.getByLabelText(/email address/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
+
+    fireEvent.change(emailInput, { target: { value: 'admin@chaos-sec.local' } });
+    fireEvent.change(passwordInput, { target: { value: 'admin' } });
 
     const submitButton = screen.getByRole('button', { name: /sign in/i });
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(
-        screen.getByText('Password must be at least 8 characters'),
-      ).toBeInTheDocument();
+      expect(mockDispatch).toHaveBeenCalledWith(
+        login({ email: 'admin@chaos-sec.local', password: 'admin' }),
+      );
     });
   });
 
@@ -213,7 +216,7 @@ describe('LoginPage – form validation', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -245,7 +248,7 @@ describe('LoginPage – form validation', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     const validEmails = [
       'user@example.com',
@@ -272,7 +275,7 @@ describe('LoginPage – successful login', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -292,7 +295,7 @@ describe('LoginPage – successful login', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -349,7 +352,7 @@ describe('LoginPage – failed login', () => {
     // validation will prevent submission if email/password are empty
     // So we need to fill in valid fields first
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -371,7 +374,7 @@ describe('LoginPage – failed login', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -395,7 +398,7 @@ describe('LoginPage – failed login', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -429,7 +432,7 @@ describe('LoginPage – failed login', () => {
 
     // Error alert should not be shown because loginAttempted is false initially
     // The Collapse component should hide the alert
-    expect(screen.queryByText('Some error')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('dispatches clearAuth when error alert is closed', () => {
@@ -442,7 +445,7 @@ describe('LoginPage – failed login', () => {
 
     // Fill in form and submit to set loginAttempted = true
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -556,14 +559,14 @@ describe('LoginPage – password visibility toggle', () => {
   it('renders password field with type "password" by default', () => {
     renderLoginPage();
 
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
     expect(passwordInput).toHaveAttribute('type', 'password');
   });
 
   it('toggles password visibility when the toggle button is clicked', () => {
     renderLoginPage();
 
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
     const toggleButton = screen.getByLabelText('toggle password visibility');
 
     fireEvent.click(toggleButton);
@@ -659,7 +662,7 @@ describe('LoginPage – form input changes', () => {
   it('updates password input value when typing', () => {
     renderLoginPage();
 
-    const passwordInput = screen.getByLabelText(/password/i) as HTMLInputElement;
+    const passwordInput = screen.getByLabelText(/^password$/i) as HTMLInputElement;
     fireEvent.change(passwordInput, { target: { value: 'mysecretpassword' } });
 
     expect(passwordInput.value).toBe('mysecretpassword');
@@ -698,7 +701,7 @@ describe('LoginPage – form input changes', () => {
     });
 
     // Fix the password
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
     fireEvent.change(passwordInput, { target: { value: 'longpassword123' } });
 
     // The validation error should be cleared
@@ -723,7 +726,7 @@ describe('LoginPage – form input changes', () => {
 
     jest.clearAllMocks();
 
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
     fireEvent.change(passwordInput, { target: { value: 'newpassword' } });
 
     expect(clearError).toHaveBeenCalled();
@@ -739,7 +742,7 @@ describe('LoginPage – submit handling', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -769,7 +772,7 @@ describe('LoginPage – submit handling', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -823,7 +826,7 @@ describe('LoginPage – UI elements', () => {
 
   it('renders the password field with VpnKey icon adornment', () => {
     renderLoginPage();
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
     expect(passwordInput).toBeInTheDocument();
   });
 
@@ -857,7 +860,7 @@ describe('LoginPage – error message extraction', () => {
 
     // Fill in form to set loginAttempted
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -878,7 +881,7 @@ describe('LoginPage – error message extraction', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -917,7 +920,7 @@ describe('LoginPage – error message extraction', () => {
 
     // Fill in form and submit to set loginAttempted
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -951,7 +954,7 @@ describe('LoginPage – edge cases', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -978,7 +981,7 @@ describe('LoginPage – edge cases', () => {
 
     // Fill in form to set loginAttempted
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
@@ -998,7 +1001,7 @@ describe('LoginPage – edge cases', () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
     // Test various invalid email formats
     const invalidEmails = ['plainaddress', 'missing@domain', '@missinglocal.com'];
@@ -1019,22 +1022,22 @@ describe('LoginPage – edge cases', () => {
     }
   });
 
-  it('validates password length correctly', async () => {
+  it('dispatches login for short passwords instead of blocking submission', async () => {
     renderLoginPage();
 
     const emailInput = screen.getByLabelText(/email address/i);
-    const passwordInput = screen.getByLabelText(/password/i);
+    const passwordInput = screen.getByLabelText(/^password$/i);
 
-    fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
-    fireEvent.change(passwordInput, { target: { value: '1234567' } }); // 7 chars
+    fireEvent.change(emailInput, { target: { value: 'admin@chaos-sec.local' } });
+    fireEvent.change(passwordInput, { target: { value: 'admin' } });
 
     const submitButton = screen.getByRole('button', { name: /sign in/i });
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(
-        screen.getByText('Password must be at least 8 characters'),
-      ).toBeInTheDocument();
+      expect(mockDispatch).toHaveBeenCalledWith(
+        login({ email: 'admin@chaos-sec.local', password: 'admin' }),
+      );
     });
   });
 });

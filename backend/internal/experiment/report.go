@@ -419,7 +419,7 @@ func (s *ReportService) GenerateHTMLReport(ctx context.Context, experimentID uui
 `)
 
 	// Header
-	buf.WriteString(fmt.Sprintf("<h1>Chaos-Sec Experiment Report</h1>\n"))
+	buf.WriteString("<h1>Chaos-Sec Experiment Report</h1>\n")
 	buf.WriteString(fmt.Sprintf("<p class=\"meta\">Generated: %s</p>\n", data.GeneratedAt.Format(time.RFC1123)))
 
 	// Experiment details

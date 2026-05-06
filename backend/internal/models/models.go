@@ -341,7 +341,7 @@ func (NotificationEvent) TableName() string { return "notification_events" }
 // LoginRequest represents a login request payload.
 type LoginRequest struct {
 	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=8"`
+	Password string `json:"password" binding:"required"`
 }
 
 // RegisterRequest represents a user registration payload.

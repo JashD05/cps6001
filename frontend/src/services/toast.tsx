@@ -29,6 +29,7 @@ import React, {
   useState,
   useRef,
   useMemo,
+  forwardRef,
 } from 'react';
 
 // ---------------------------------------------------------------------------
@@ -127,7 +128,7 @@ function getSlideDirection(position: ToastPosition): SlideDirection {
   return 'left';
 }
 
-const _SlideTransition = React.forwardRef(function SlideTransition(
+const _SlideTransition = forwardRef(function SlideTransition(
   props: SlideProps & { position?: ToastPosition },
   ref: React.Ref<unknown>,
 ) {
@@ -284,10 +285,12 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({
     const groups = new Map<ToastPosition, ToastMessage[]>();
     for (const toast of toasts) {
       const pos = toast.position ?? defaultPosition;
-      if (!groups.has(pos)) {
-        groups.set(pos, []);
+      let group = groups.get(pos);
+      if (!group) {
+        group = [];
+        groups.set(pos, group);
       }
-      groups.get(pos)!.push(toast);
+      group.push(toast);
     }
     return groups;
   }, [toasts, defaultPosition]);
@@ -431,8 +434,10 @@ export function __registerToastHandler(
   preMountHandler = handler;
   // Flush any queued toasts
   while (preMountQueue.length > 0) {
-    const opts = preMountQueue.shift()!;
-    handler(opts);
+    const opts = preMountQueue.shift();
+    if (opts) {
+      handler(opts);
+    }
   }
 }
 

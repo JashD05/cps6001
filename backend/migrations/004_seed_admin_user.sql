@@ -6,16 +6,16 @@
 
 -- Insert the default admin user.
 -- Email:    admin@chaos-sec.local
--- Password: chaos-sec-admin   (bcrypt-hashed, cost 10)
+-- Password: admin   (bcrypt-hashed, cost 10)
 -- Organization: 'Default Organization' (inserted in 001_initial_schema.sql)
 -- Role: 'admin' (inserted in 001_initial_schema.sql)
 --
 -- NOTE: To regenerate the bcrypt hash, run:
---   go run -e -c 'package main; import ("fmt"; "golang.org/x/crypto/bcrypt"); func main() { h, _ := bcrypt.GenerateFromPassword([]byte("chaos-sec-admin"), bcrypt.DefaultCost); fmt.Println(string(h)) }'
+--   go run -e -c 'package main; import ("fmt"; "golang.org/x/crypto/bcrypt"); func main() { h, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost); fmt.Println(string(h)) }'
 INSERT INTO users (email, password_hash, name, organization_id, role_id, is_active)
 SELECT
     'admin@chaos-sec.local',
-    '$2a$10$9B6BS8ZTa.zEi3qOKzCSH.GC3XkSsGHEaKREb5SxN18jDl6rl7AFm',
+    '$2a$10$m2.lZ4BkDSPquIZSvdhnJOjJ2Rw6LCZOaDodirQXXk.65vpM45VNi',
     'Chaos-Sec Admin',
     o.id,
     r.id,

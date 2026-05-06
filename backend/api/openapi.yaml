@@ -77,8 +77,8 @@ paths:
               valid:
                 summary: Valid login
                 value:
-                  email: admin@chaos-sec.io
-                  password: "secureP@ssw0rd!"
+                  email: admin@chaos-sec.local
+                  password: admin
       responses:
         "200":
           description: Authentication successful
@@ -1015,7 +1015,6 @@ components:
           type: string
           format: password
           description: Account password
-          minLength: 8
           maxLength: 128
       additionalProperties: false
 

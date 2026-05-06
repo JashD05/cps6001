@@ -2200,7 +2200,8 @@ describe('normalizeTemplateParameters', () => {
 
     const result = await templatesAPI.list({});
     const params = getTemplate(result).parameters as TemplateParameter[];
-    const options = params[0].options!;
+    const options = params[0].options;
+    expect(options).toBeDefined();
     expect(options).toEqual([
       { label: 'dev', value: 'dev' },
       { label: 'staging', value: 'staging' },
@@ -2233,7 +2234,8 @@ describe('normalizeTemplateParameters', () => {
 
     const result = await templatesAPI.list({});
     const params = getTemplate(result).parameters as TemplateParameter[];
-    const options = params[0].options!;
+    const options = params[0].options;
+    expect(options).toBeDefined();
     expect(options).toEqual([
       { label: 'Development', value: 'dev' },
       { label: 'Production', value: 'prod' },
@@ -2324,9 +2326,12 @@ describe('normalizeTemplateParameters', () => {
     const namespaceParam = params.find((p) => p.key === 'namespace');
     const durationParam = params.find((p) => p.key === 'duration');
     const optionalParam = params.find((p) => p.key === 'optional_field');
-    expect(namespaceParam!.required).toBe(true);
-    expect(durationParam!.required).toBe(true);
-    expect(optionalParam!.required).toBe(false);
+    expect(namespaceParam).toBeDefined();
+    expect(namespaceParam?.required).toBe(true);
+    expect(durationParam).toBeDefined();
+    expect(durationParam?.required).toBe(true);
+    expect(optionalParam).toBeDefined();
+    expect(optionalParam?.required).toBe(false);
   });
 
   it('handles non-object, non-array parameters gracefully', async () => {

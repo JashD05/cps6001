@@ -57,9 +57,7 @@ export const clearTokens = (): void => {
 // ---------------------------------------------------------------------------
 
 const BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ??
-  import.meta.env.VITE_API_URL ??
-  'http://localhost:8081/api/v1';
+  import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL ?? '/api/v1';
 
 type BackendPaginatedResponse<T> = {
   data?: T[];
@@ -1385,7 +1383,7 @@ export const reportsAPI = {
     experiment_ids?: string[];
     date_from?: string;
     date_to?: string;
-  }) => apiClient.post<APIResponse<Report>>('/reports', data),
+  }) => apiClient.post<APIResponse<Report>>('/reports/generate', data),
 
   download: (id: string, format: string = 'pdf') =>
     apiClient.get<Blob>(`/reports/${id}/download`, {
