@@ -1158,6 +1158,22 @@ echo "Running health checks..."
 echo "Deployment to ${ENVIRONMENT} completed successfully!"
 ```
 
+### Kubernetes Validation
+
+After deploying to a Kubernetes cluster, use the validation script to verify the experiment execution pipeline:
+
+```bash
+./deploy/scripts/k8s-validation.sh --kubeconfig=/path/to/kubeconfig --namespace=chaos-sec
+```
+
+**What the script validates:**
+- Pod creation and scheduler integration
+- Experiment execution workflow
+- Attack pod deployment and cleanup
+- SIEM alert ingestion and correlation
+
+Run this script as part of post-deployment verification or when troubleshooting cluster-related issues.
+
 ---
 
 ## Monitoring & Observability

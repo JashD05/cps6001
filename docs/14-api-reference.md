@@ -20,9 +20,11 @@
 10. [Dashboard Endpoints](#10-dashboard-endpoints)
 11. [Report Endpoints](#11-report-endpoints)
 12. [Health Endpoints](#12-health-endpoints)
-13. [WebSocket API](#13-websocket-api)
-14. [Error Codes](#14-error-codes)
-15. [Rate Limiting](#15-rate-limiting)
+13. [User Management Endpoints](#13-user-management-endpoints)
+14. [Settings & Configuration Endpoints](#14-settings--configuration-endpoints)
+15. [WebSocket API](#15-websocket-api)
+16. [Error Codes](#16-error-codes)
+17. [Rate Limiting](#17-rate-limiting)
 
 ---
 
@@ -213,13 +215,13 @@ Authenticate a user and obtain access/refresh tokens.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `email` | string | Yes | User email address |
+| `username` | string | Yes | User username |
 | `password` | string | Yes | User password (min 8 chars) |
 
 **Request Example:**
 ```json
 {
-  "email": "admin@chaos-sec.local",
+  "username": "admin",
   "password": "admin"
 }
 ```
@@ -326,6 +328,7 @@ Retrieve the authenticated user's profile with fresh role and permission data.
   "data": {
     "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     "email": "admin@chaos-sec.local",
+    "username": "admin",
     "name": "Admin User",
     "is_active": true,
     "role": {
@@ -707,6 +710,74 @@ Stop a running experiment.
 
 ---
 
+### POST /api/v1/experiments/:id/cancel
+
+Cancel a running or scheduled experiment.
+
+> **Note:** This endpoint is distinct from `POST /experiments/:id/stop`. While `stop` halts a running experiment and transitions it to `stopped`, `cancel` cancels a running or scheduled experiment and transitions it to `cancelled`, returning a `cancelled_at` timestamp. The API design document (`04-api-design.md`) defines both endpoints; `stop` is the primary action for halting execution, while `cancel` is used for cancelling scheduled or running experiments with a cancellation record.
+
+**Authentication:** JWT with `experiments:execute`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | UUID | Experiment ID |
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "status": "cancelled",
+    "cancelled_at": "2026-04-21T10:30:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 400 | `invalid_state` | Experiment is already completed or cancelled |
+| 404 | `not_found` | Experiment ID does not exist |
+
+---
+
+### POST /api/v1/experiments/:id/retry
+
+Retry a failed or cancelled experiment by creating a new experiment instance based on the original's configuration.
+
+**Authentication:** JWT with `experiments:execute`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | UUID | Original experiment ID |
+
+**Response `201 Created`:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+    "original_experiment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "status": "pending"
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 400 | `invalid_state` | Original experiment status is not `failed` or `cancelled` |
+| 404 | `not_found` | Experiment ID does not exist |
+
+---
+
 ## 6. Template Endpoints
 
 ### GET /api/v1/templates
@@ -792,6 +863,94 @@ Get template details with full parameter and phase definitions.
 | `id` | UUID | Template ID |
 
 **Response `200 OK`:** Returns the full template object with parameters, attack phases, and expected detections.
+
+---
+
+### PUT /api/v1/templates/:id
+
+Update an existing experiment template.
+
+**Authentication:** JWT with `templates:write`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | UUID | Template ID |
+
+**Request Body:** Same fields as `POST /api/v1/templates` (all optional — only provided fields are updated).
+
+**Request Example:**
+```json
+{
+  "name": "Updated Egress Network Validation",
+  "description": "Updated description for egress network policy testing",
+  "severity": "critical",
+  "parameters": [
+    {
+      "key": "target_url",
+      "label": "Target URL",
+      "type": "string",
+      "default_value": "8.8.8.8",
+      "required": true,
+      "description": "Target IP or hostname for egress test"
+    }
+  ]
+}
+```
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "t1t2t3t4-t5t6-t7t8-t9t0-t1t2t3t4t5t6",
+    "name": "Updated Egress Network Validation",
+    "description": "Updated description for egress network policy testing",
+    "category": "network",
+    "severity": "critical",
+    "updated_at": "2026-04-21T10:30:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 400 | `validation_error` | Invalid request body fields |
+| 404 | `not_found` | Template ID does not exist |
+
+---
+
+### DELETE /api/v1/templates/:id
+
+Delete an experiment template.
+
+**Authentication:** JWT with `templates:write` or `admin:all`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | UUID | Template ID |
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Template deleted"
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 404 | `not_found` | Template ID does not exist |
+| 409 | `conflict` | Template is currently in use by running experiments |
 
 ---
 
@@ -1176,6 +1335,8 @@ Get current SIEM connector status.
 
 Test the SIEM connection by performing a health check.
 
+> **Note:** The API design document (`04-api-design.md`) defines this endpoint as `POST /siem/test` with a request body containing `provider`, `endpoint`, and `credentials` for testing arbitrary SIEM connections. The implemented endpoint is `POST /siem/test-connection`, which tests the currently configured SIEM connection without requiring a request body. Both endpoints serve the same purpose; `test-connection` is the canonical endpoint name.
+
 **Authentication:** JWT with `clusters:write`
 
 **Response `200 OK`:**
@@ -1269,6 +1430,8 @@ Query SIEM alerts with custom filters and time range.
 
 Get SIEM alerts for a specific experiment run.
 
+> **Note:** The API design document (`04-api-design.md`) defines this endpoint as `GET /experiments/:id/siem-alerts`, which retrieves alerts scoped to an experiment ID with optional `from`/`to` query parameters and returns a `validation` object. The implemented endpoint is `GET /siem/alerts/:run_id`, which retrieves alerts scoped to a specific run ID and supports additional query parameters (`experiment_id`, `offset`, `limit`). Both serve the same purpose; `/siem/alerts/:run_id` is the canonical endpoint.
+
 **Authentication:** JWT with `experiments:read`
 
 **Path Parameters:**
@@ -1341,6 +1504,83 @@ Get dashboard summary data.
   }
 }
 ```
+
+---
+
+### GET /api/v1/dashboard/experiments/chart
+
+Get experiment trend data for charts.
+
+**Authentication:** JWT with `experiments:read`
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `period` | string | `7d` | Time period: `7d`, `30d`, `90d` |
+| `granularity` | string | `day` | Data granularity: `hour`, `day`, `week` |
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "labels": ["2026-04-15", "2026-04-16", "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-21"],
+    "datasets": [
+      {
+        "label": "Passed",
+        "data": [42, 38, 45, 50, 48, 52, 45]
+      },
+      {
+        "label": "Failed",
+        "data": [3, 5, 2, 4, 3, 2, 2]
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET /api/v1/dashboard/security-controls
+
+Get security control validation status.
+
+**Authentication:** JWT with `experiments:read`
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "control_id": "ctrl_001",
+      "name": "Pod Egress Restriction",
+      "type": "network_policy",
+      "status": "validated",
+      "last_tested": "2026-04-21T09:00:00Z",
+      "test_count": 45,
+      "pass_rate": 100
+    },
+    {
+      "control_id": "ctrl_002",
+      "name": "Ingress Traffic Filtering",
+      "type": "network_policy",
+      "status": "failed",
+      "last_tested": "2026-04-21T08:00:00Z",
+      "test_count": 30,
+      "pass_rate": 73.3,
+      "failure_reason": "Unexpected ingress traffic allowed from 10.0.0.0/8"
+    }
+  ]
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 500 | `internal_error` | Failed to retrieve security control data |
 
 ---
 
@@ -1445,7 +1685,351 @@ Readiness probe — verifies the process is ready to serve traffic (checks datab
 
 ---
 
-## 13. WebSocket API
+## 13. User Management Endpoints
+
+### GET /api/v1/users
+
+List all users in the organization.
+
+**Authentication:** JWT with `admin:all` or `users:manage`
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | integer | 1 | Page number |
+| `per_page` | integer | 20 | Items per page (max: 100) |
+| `sort` | string | `created_at_desc` | Sort field and direction |
+| `search` | string | — | Search by name or email |
+| `role` | string | — | Filter by role (`admin`, `operator`, `viewer`) |
+| `is_active` | boolean | — | Filter by active status |
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "u1u2u3u4-u5u6-u7u8-u9u0-u1u2u3u4u5u6",
+        "email": "admin@chaos-sec.local",
+        "name": "Admin User",
+        "is_active": true,
+        "role": {
+          "id": "r1r2r3r4-r5r6-r7r8-r9r0-r1r2r3r4r5r6",
+          "name": "admin",
+          "description": "Full administrative access",
+          "permissions": ["admin:all", "users:manage", "experiments:read", "experiments:write", "experiments:execute", "experiments:delete", "templates:read", "templates:write", "clusters:read", "clusters:write"]
+        },
+        "organization_id": "o1o2o3o4-o5o6-o7o8-o9o0-o1o2o3o4o5o6",
+        "last_login_at": "2026-04-21T08:30:00Z",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-04-21T08:30:00Z"
+      }
+    ],
+    "total_count": 5,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 1,
+    "has_next_page": false,
+    "has_previous_page": false
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 403 | `forbidden` | User does not have `admin:all` or `users:manage` permission |
+
+---
+
+### POST /api/v1/users
+
+Create a new user.
+
+**Authentication:** JWT with `admin:all` or `users:manage`
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `email` | string | Yes | User email address |
+| `password` | string | Yes | Initial password (min 8 characters) |
+| `name` | string | Yes | Display name |
+| `role_id` | UUID | Yes | Role ID to assign |
+| `organization_id` | UUID | No | Organization ID (defaults to caller's org) |
+
+**Request Example:**
+```json
+{
+  "email": "newuser@chaos-sec.local",
+  "password": "secure_password_123",
+  "name": "New Operator",
+  "role_id": "r2r3r4r5-r6r7-r8r9-r0r1-r2r3r4r5r6r7",
+  "organization_id": "o1o2o3o4-o5o6-o7o8-o9o0-o1o2o3o4o5o6"
+}
+```
+
+**Response `201 Created`:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "u2u3u4u5-u6u7-u8u9-u0u1-u2u3u4u5u6u7",
+    "email": "newuser@chaos-sec.local",
+    "name": "New Operator",
+    "is_active": true,
+    "role": {
+      "id": "r2r3r4r5-r6r7-r8r9-r0r1-r2r3r4r5r6r7",
+      "name": "operator",
+      "description": "Standard operator access"
+    },
+    "organization_id": "o1o2o3o4-o5o6-o7o8-o9o0-o1o2o3o4o5o6",
+    "created_at": "2026-04-21T10:30:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 400 | `validation_error` | Missing or invalid request body fields |
+| 403 | `forbidden` | User does not have `admin:all` or `users:manage` permission |
+| 409 | `conflict` | Email already exists |
+
+---
+
+### PUT /api/v1/users/:id
+
+Update user details.
+
+**Authentication:** JWT with `admin:all` or `users:manage`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | UUID | User ID |
+
+**Request Body:** All fields optional — only provided fields are updated.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `email` | string | No | New email address |
+| `name` | string | No | New display name |
+| `role_id` | UUID | No | New role to assign |
+| `is_active` | boolean | No | Activate or deactivate user |
+
+**Request Example:**
+```json
+{
+  "email": "updated@chaos-sec.local",
+  "role_id": "r3r4r5r6-r7r8-r9r0-r1r2-r3r4r5r6r7r8",
+  "is_active": true
+}
+```
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "u2u3u4u5-u6u7-u8u9-u0u1-u2u3u4u5u6u7",
+    "email": "updated@chaos-sec.local",
+    "name": "New Operator",
+    "is_active": true,
+    "role": {
+      "id": "r3r4r5r6-r7r8-r9r0-r1r2-r3r4r5r6r7r8",
+      "name": "viewer",
+      "description": "Read-only access"
+    },
+    "organization_id": "o1o2o3o4-o5o6-o7o8-o9o0-o1o2o3o4o5o6",
+    "updated_at": "2026-04-21T11:00:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 400 | `validation_error` | Invalid request body fields |
+| 403 | `forbidden` | User does not have `admin:all` or `users:manage` permission |
+| 404 | `not_found` | User ID does not exist |
+| 409 | `conflict` | Email already in use by another user |
+
+---
+
+### DELETE /api/v1/users/:id
+
+Delete a user.
+
+**Authentication:** JWT with `admin:all` or `users:manage`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | UUID | User ID |
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "User deleted"
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 403 | `forbidden` | User does not have `admin:all` or `users:manage` permission |
+| 404 | `not_found` | User ID does not exist |
+| 409 | `conflict` | Cannot delete the last admin user |
+
+---
+
+## 14. Settings & Configuration Endpoints
+
+### GET /api/v1/settings
+
+Get current system settings.
+
+**Authentication:** JWT with `admin:all`
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "general": {
+      "platform_name": "Chaos-Sec",
+      "default_timeout_seconds": 600,
+      "max_concurrent_experiments": 5
+    },
+    "kubernetes": {
+      "default_namespace": "chaos-sec",
+      "cleanup_on_failure": true,
+      "pod_security_context": {
+        "run_as_non_root": true,
+        "allow_privilege_escalation": false
+      }
+    },
+    "siem": {
+      "enabled": true,
+      "provider": "splunk",
+      "sync_interval_seconds": 60
+    },
+    "notifications": {
+      "email_enabled": false,
+      "slack_enabled": true,
+      "slack_webhook_url": "https://hooks.slack.com/..."
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 403 | `forbidden` | User does not have `admin:all` permission |
+
+---
+
+### PUT /api/v1/settings
+
+Update system settings. Only provided fields are updated; omitted fields remain unchanged.
+
+**Authentication:** JWT with `admin:all`
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `general` | object | No | General platform settings |
+| `general.platform_name` | string | No | Platform display name |
+| `general.default_timeout_seconds` | integer | No | Default experiment timeout (default: 600) |
+| `general.max_concurrent_experiments` | integer | No | Maximum concurrent experiments (default: 5) |
+| `kubernetes` | object | No | Kubernetes connection settings |
+| `kubernetes.default_namespace` | string | No | Default namespace for experiments |
+| `kubernetes.cleanup_on_failure` | boolean | No | Clean up resources on failure |
+| `kubernetes.pod_security_context` | object | No | Pod security context settings |
+| `siem` | object | No | SIEM integration settings |
+| `siem.enabled` | boolean | No | Enable SIEM integration |
+| `siem.provider` | string | No | SIEM provider (`splunk`, `elastic`, `mock`) |
+| `siem.sync_interval_seconds` | integer | No | SIEM sync interval |
+| `notifications` | object | No | Notification settings |
+| `notifications.email_enabled` | boolean | No | Enable email notifications |
+| `notifications.slack_enabled` | boolean | No | Enable Slack notifications |
+| `notifications.slack_webhook_url` | string | No | Slack webhook URL |
+
+**Request Example:**
+```json
+{
+  "general": {
+    "default_timeout_seconds": 900,
+    "max_concurrent_experiments": 10
+  },
+  "siem": {
+    "provider": "elastic",
+    "sync_interval_seconds": 30
+  },
+  "notifications": {
+    "email_enabled": true,
+    "email_recipients": ["admin@example.com", "security@example.com"]
+  }
+}
+```
+
+**Response `200 OK`:**
+```json
+{
+  "success": true,
+  "data": {
+    "general": {
+      "platform_name": "Chaos-Sec",
+      "default_timeout_seconds": 900,
+      "max_concurrent_experiments": 10
+    },
+    "kubernetes": {
+      "default_namespace": "chaos-sec",
+      "cleanup_on_failure": true,
+      "pod_security_context": {
+        "run_as_non_root": true,
+        "allow_privilege_escalation": false
+      }
+    },
+    "siem": {
+      "enabled": true,
+      "provider": "elastic",
+      "sync_interval_seconds": 30
+    },
+    "notifications": {
+      "email_enabled": true,
+      "slack_enabled": true,
+      "slack_webhook_url": "https://hooks.slack.com/..."
+    }
+  }
+}
+```
+
+**Error Responses:**
+
+| Status | Code | When |
+|--------|------|------|
+| 400 | `validation_error` | Invalid setting values |
+| 403 | `forbidden` | User does not have `admin:all` permission |
+
+---
+
+## 15. WebSocket API
 
 ### Connection
 
@@ -1526,7 +2110,7 @@ The WebSocket client implements automatic reconnection with exponential backoff 
 
 ---
 
-## 14. Error Codes
+## 16. Error Codes
 
 ### Standard Error Codes
 
@@ -1570,7 +2154,7 @@ The WebSocket client implements automatic reconnection with exponential backoff 
 
 ---
 
-## 15. Rate Limiting
+## 17. Rate Limiting
 
 ### Configuration
 

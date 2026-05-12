@@ -415,7 +415,7 @@ type CreateExperimentRequest struct {
 
 // ExperimentTemplateInput represents a template configuration in experiment creation.
 type ExperimentTemplateInput struct {
-	AttackTemplateID string          `json:"attack_template_id" binding:"required,uuid"`
+	AttackTemplateID string          `json:"attack_template_id" binding:"required"`
 	OrderIndex       int             `json:"order_index"`
 	Configuration    json.RawMessage `json:"configuration" binding:"required"`
 	TargetNamespaces []string        `json:"target_namespaces"`

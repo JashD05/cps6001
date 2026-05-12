@@ -25,6 +25,7 @@ import {
   Typography,
   Card,
   CardContent,
+  CircularProgress,
   TextField,
   Button,
   Switch,
@@ -53,7 +54,7 @@ import {
   useMediaQuery,
   type SelectChangeEvent,
 } from '@mui/material';
-import React, { useState, useCallback, type FormEvent } from 'react';
+import React, { useState, useCallback, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppSelector, useAppDispatch } from '@/store';
 import { selectCurrentUser, updateUserProfile } from '@/store/authSlice';
@@ -142,11 +143,33 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ onSaved }) => {
     newPassword: '',
     confirmPassword: '',
   });
+
+  // Sync form state when currentUser loads from store
+  useEffect(() => {
+    if (currentUser) {
+      setForm({
+        name: currentUser.name ?? '',
+        email: currentUser.email ?? '',
+      });
+    }
+  }, [currentUser]);
+
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
+
+  const profileInitials = currentUser?.name
+    ? currentUser.name
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((part) => part[0])
+        .join('')
+        .substring(0, 2)
+        .toUpperCase()
+    : 'CS';
 
   const handleProfileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -201,6 +224,26 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ onSaved }) => {
     [passwordForm, onSaved],
   );
 
+  if (!currentUser) {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          py: 8,
+          gap: 2,
+        }}
+      >
+        <CircularProgress size={32} thickness={4} />
+        <Typography variant="body2" color="text.secondary">
+          Loading profile…
+        </Typography>
+      </Box>
+    );
+  }
+
   return (
     <Stack spacing={3}>
       {/* Profile Information */}
@@ -234,11 +277,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ onSaved }) => {
                       fontWeight: 700,
                     }}
                   >
-                    {currentUser?.name
-                      ?.split(' ')
-                      .map((n) => n[0])
-                      .join('')
-                      .substring(0, 2) ?? 'CS'}
+                    {profileInitials}
                   </Avatar>
                   <Button variant="outlined" size="small" sx={{ textTransform: 'none' }}>
                     Change Avatar
@@ -284,7 +323,11 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ onSaved }) => {
                       Role:
                     </Typography>
                     <Chip
-                      label={currentUser?.role ?? 'viewer'}
+                      label={
+                        typeof currentUser?.role === 'string'
+                          ? currentUser.role
+                          : 'viewer'
+                      }
                       size="small"
                       color="primary"
                       variant="outlined"

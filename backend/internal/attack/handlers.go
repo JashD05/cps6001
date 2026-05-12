@@ -197,7 +197,19 @@ func (h *Handler) ListTemplatesHandler(c *gin.Context) {
 		combined = append(combined, item)
 	}
 
+	// Collect slugs from database results so we can skip registry modules
+	// that are already present in the database (avoid duplicates and ensure
+	// every returned template has a proper UUID id).
+	dbSlugs := make(map[string]struct{}, len(combined))
+	for _, item := range combined {
+		if item.Slug != "" {
+			dbSlugs[item.Slug] = struct{}{}
+		}
+	}
+
 	// Optionally include built-in modules from the registry.
+	// Modules whose slug already exists in the database are skipped so
+	// the database entry (with a real UUID id) takes precedence.
 	moduleCount := 0
 	if includeModules == "true" || includeModules == "1" {
 		var modules []AttackModule
@@ -208,6 +220,13 @@ func (h *Handler) ListTemplatesHandler(c *gin.Context) {
 		}
 
 		for _, m := range modules {
+			moduleSlug := m.ID()
+
+			// Skip modules already represented by a database row.
+			if _, exists := dbSlugs[moduleSlug]; exists {
+				continue
+			}
+
 			if severity != "" && m.Severity() != severity {
 				continue
 			}
@@ -233,9 +252,9 @@ func (h *Handler) ListTemplatesHandler(c *gin.Context) {
 			}
 
 			combined = append(combined, unifiedTemplateItem{
-				ID:          m.ID(),
+				ID:          moduleSlug,
 				Name:        m.Name(),
-				Slug:        m.ID(),
+				Slug:        moduleSlug,
 				Category:    m.Category(),
 				Severity:    m.Severity(),
 				Description: m.Description(),

@@ -1087,7 +1087,7 @@ export default function Layout() {
                   >
                     {currentUser?.email ?? 'user@chaos-sec.io'}
                   </Typography>
-                  {currentUser?.role && (
+                  {currentUser?.role && typeof currentUser.role === 'string' && (
                     <Chip
                       label={currentUser.role}
                       size="small"

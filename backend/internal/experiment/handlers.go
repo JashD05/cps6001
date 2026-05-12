@@ -398,40 +398,55 @@ func (h *Handler) CreateExperiment(c *gin.Context) {
 		return
 	}
 
-	// Validate that referenced attack templates exist
+	// Validate that referenced attack templates exist.
+	// AttackTemplateID may be a UUID (for database templates) or a slug
+	// (for built-in modules returned by the registry). Resolve slugs to
+	// UUIDs so that experiment_templates always stores a proper UUID.
 	for i, tmpl := range req.Templates {
-		templateID, err := uuid.Parse(tmpl.AttackTemplateID)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse{
-				Error:   "invalid_template",
-				Message: fmt.Sprintf("Invalid attack template ID at index %d.", i),
-				Code:    http.StatusBadRequest,
-			})
-			return
+		var resolvedID uuid.UUID
+
+		if parsedID, err := uuid.Parse(tmpl.AttackTemplateID); err == nil {
+			// It's a valid UUID – look it up directly by ID.
+			resolvedID = parsedID
+			var exists bool
+			if err := h.db.QueryRowContext(c.Request.Context(),
+				"SELECT EXISTS(SELECT 1 FROM attack_templates WHERE id = $1 AND is_active = true)",
+				resolvedID,
+			).Scan(&exists); err != nil {
+				h.logger.Error("failed to verify attack template", zap.Error(err))
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+					Error:   "internal_error",
+					Message: "Failed to validate experiment templates.",
+					Code:    http.StatusInternalServerError,
+				})
+				return
+			} else if !exists {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{
+					Error:   "invalid_template",
+					Message: fmt.Sprintf("Attack template at index %d not found or inactive.", i),
+					Code:    http.StatusBadRequest,
+				})
+				return
+			}
+		} else {
+			// Not a UUID – treat it as a slug and look up the database row.
+			err := h.db.QueryRowContext(c.Request.Context(),
+				"SELECT id FROM attack_templates WHERE slug = $1 AND is_active = true",
+				tmpl.AttackTemplateID,
+			).Scan(&resolvedID)
+			if err != nil {
+				h.logger.Error("failed to resolve attack template slug", zap.Error(err), zap.String("slug", tmpl.AttackTemplateID))
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{
+					Error:   "invalid_template",
+					Message: fmt.Sprintf("Attack template %q at index %d not found or inactive.", tmpl.AttackTemplateID, i),
+					Code:    http.StatusBadRequest,
+				})
+				return
+			}
 		}
 
-		var exists bool
-		err = h.db.QueryRowContext(c.Request.Context(),
-			"SELECT EXISTS(SELECT 1 FROM attack_templates WHERE id = $1 AND is_active = true)",
-			templateID,
-		).Scan(&exists)
-		if err != nil {
-			h.logger.Error("failed to verify attack template", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-				Error:   "internal_error",
-				Message: "Failed to validate experiment templates.",
-				Code:    http.StatusInternalServerError,
-			})
-			return
-		}
-		if !exists {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse{
-				Error:   "invalid_template",
-				Message: fmt.Sprintf("Attack template at index %d not found or inactive.", i),
-				Code:    http.StatusBadRequest,
-			})
-			return
-		}
+		// Overwrite with the resolved UUID so the rest of the handler uses it.
+		req.Templates[i].AttackTemplateID = resolvedID.String()
 	}
 
 	// Set defaults

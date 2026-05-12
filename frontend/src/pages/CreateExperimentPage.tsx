@@ -170,7 +170,7 @@ const getParameterCopy = (param: TemplateParameter) => {
 
 const MOCK_TEMPLATES: AttackTemplate[] = [
   {
-    id: 'tmpl-dns-exfil',
+    id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
     name: 'DNS Exfiltration',
     description:
       'Simulates data exfiltration via DNS queries to detect DLP and monitoring gaps.',
@@ -264,7 +264,7 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
     updatedAt: '2024-03-01T00:00:00Z',
   },
   {
-    id: 'tmpl-brute-force',
+    id: '7c9e6679-7425-40de-944b-078d6f8e1a2b',
     name: 'Brute Force Attack',
     description:
       'Simulates credential brute force attacks against Kubernetes service accounts.',
@@ -338,7 +338,7 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
     updatedAt: '2024-02-28T00:00:00Z',
   },
   {
-    id: 'tmpl-pod-kill',
+    id: '550e8400-e29b-41d4-a716-446655440000',
     name: 'Pod Kill',
     description:
       'Randomly kills pods to test cluster resilience and auto-healing capabilities.',
@@ -428,7 +428,7 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
     updatedAt: '2024-03-05T00:00:00Z',
   },
   {
-    id: 'tmpl-network-partition',
+    id: '6ba7b810-9dad-11d1-80b4-00c04fd430c8',
     name: 'Network Partition',
     description:
       'Simulates network partitions between pods to test service mesh failover and redundancy.',
@@ -521,7 +521,7 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
     updatedAt: '2024-03-10T00:00:00Z',
   },
   {
-    id: 'tmpl-priv-escalation',
+    id: '9e107667-4a0d-4e6b-8c2d-6d4a7f8b9e0c',
     name: 'Privilege Escalation',
     description:
       'Tests for container privilege escalation vectors and RBAC misconfigurations.',
@@ -605,7 +605,7 @@ const MOCK_TEMPLATES: AttackTemplate[] = [
     updatedAt: '2024-03-12T00:00:00Z',
   },
   {
-    id: 'tmpl-data-access',
+    id: '3c5a7b2d-8f4e-4a1b-9c7d-2e6f8a4b1c3d',
     name: 'Unauthorized Data Access',
     description:
       'Attempts to access sensitive data stores to validate access controls and audit logging.',
@@ -792,6 +792,8 @@ const CreateExperimentPage: React.FC = () => {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [templates, setTemplates] = useState<AttackTemplate[]>(MOCK_TEMPLATES);
   const [clusters, setClusters] = useState<Cluster[]>(MOCK_CLUSTERS);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  const [clustersLoaded, setClustersLoaded] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -813,9 +815,12 @@ const CreateExperimentPage: React.FC = () => {
 
         if (loadedTemplates.length > 0) {
           setTemplates(loadedTemplates);
+          setTemplatesLoaded(true);
         }
       } catch {
         // Keep fallback templates when the API is unavailable.
+        // Templates from the API are required for experiment creation
+        // because the backend validates attack_template_id against the database.
       }
     };
 
@@ -836,6 +841,7 @@ const CreateExperimentPage: React.FC = () => {
 
         if (loadedClusters.length > 0) {
           setClusters(loadedClusters);
+          setClustersLoaded(true);
         }
       } catch {
         // Keep fallback clusters when the API is unavailable.
@@ -980,6 +986,14 @@ const CreateExperimentPage: React.FC = () => {
 
   const handleCreate = useCallback(async () => {
     if (!selectedTemplate || !wizard.clusterId || !wizard.selectedTemplateId) return;
+
+    if (!templatesLoaded || !clustersLoaded) {
+      setLaunchState('failed');
+      setLaunchError(
+        'Unable to create experiment: required data could not be loaded from the server. Please refresh the page and try again.',
+      );
+      return;
+    }
 
     launchCancelRef.current = false;
     setLaunchState('idle');
@@ -2460,6 +2474,17 @@ const CreateExperimentPage: React.FC = () => {
 
   return (
     <Box sx={{ maxWidth: 1100, mx: 'auto' }}>
+      {/* Warning when required data could not be loaded from the API */}
+      {(!templatesLoaded || !clustersLoaded) && (
+        <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
+          {!templatesLoaded && !clustersLoaded
+            ? 'Unable to load attack templates and clusters from the server. Experiment creation requires data from the server. Please check your connection and refresh the page.'
+            : !templatesLoaded
+              ? 'Unable to load attack templates from the server. Experiment creation requires valid templates. Please check your connection and refresh the page.'
+              : 'Unable to load clusters from the server. Experiment creation requires valid cluster data. Please check your connection and refresh the page.'}
+        </Alert>
+      )}
+
       {/* Page Header */}
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Box>
