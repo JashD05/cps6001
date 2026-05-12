@@ -64,6 +64,7 @@ import {
   selectExperimentDetailLoading,
   selectExperimentDetailError,
   selectExperimentLogs,
+  selectCurrentRun,
   executeExperiment,
   stopExperiment,
   selectExecuteStatus,
@@ -73,7 +74,12 @@ import {
   resetStopStatus,
 } from '@/store/experimentSlice';
 import type { AppDispatch } from '@/store';
-import type { ExperimentStep, SIEMValidationResult, ExperimentResult } from '@/types';
+import type {
+  ExperimentStep,
+  SIEMValidationResult,
+  ExperimentResult,
+  ExperimentRun,
+} from '@/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -135,11 +141,12 @@ const getStepIcon = (status: ExperimentStep['status']): React.ReactElement => {
 
 /** Execution Steps – vertical stepper showing each experiment step */
 interface ProgressTrackerProps {
-  steps: ExperimentStep[];
+  steps: ExperimentStep[] | null | undefined;
 }
 
 const ProgressTracker: React.FC<ProgressTrackerProps> = ({ steps }) => {
-  const sortedSteps = [...steps].sort((a, b) => a.order - b.order);
+  const safeSteps = Array.isArray(steps) ? steps : [];
+  const sortedSteps = [...safeSteps].sort((a, b) => a.order - b.order);
 
   return (
     <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
@@ -150,7 +157,7 @@ const ProgressTracker: React.FC<ProgressTrackerProps> = ({ steps }) => {
             Execution Steps
           </Typography>
           <Chip
-            label={`${steps.filter((s) => s.status === 'completed').length}/${steps.length}`}
+            label={`${safeSteps.filter((s) => s.status === 'completed').length}/${safeSteps.length}`}
             size="small"
             sx={{ ml: 'auto', height: 22, fontSize: '0.6875rem' }}
           />
@@ -761,9 +768,34 @@ const ExperimentDetailPage: React.FC = () => {
   const isLoading = useSelector(selectExperimentDetailLoading);
   const error = useSelector(selectExperimentDetailError);
   const logs = useSelector(selectExperimentLogs);
+  const currentRun = useSelector(selectCurrentRun) as ExperimentRun | null;
   const executeStatus = useSelector(selectExecuteStatus);
   const executeError = useSelector(selectExecuteError);
   const stopStatus = useSelector(selectStopStatus);
+
+  const latestCompletedRun =
+    experiment?.runs?.find((run) =>
+      ['completed', 'failed', 'stopped', 'timed_out'].includes(run.status),
+    ) ?? null;
+  const latestRun = currentRun ?? latestCompletedRun ?? experiment?.runs?.[0] ?? null;
+  const latestRunCompleted =
+    latestRun != null &&
+    ['completed', 'failed', 'stopped', 'timed_out'].includes(latestRun.status);
+
+  const displayStatus = latestRun?.status ?? experiment?.status;
+  const displayResult = latestRun?.result ?? experiment?.result ?? null;
+  const displaySteps =
+    latestRunCompleted && Array.isArray(latestRun.steps) && latestRun.steps.length > 0
+      ? latestRun.steps
+      : Array.isArray(experiment?.steps)
+        ? experiment.steps.map((step) => ({
+            ...step,
+            status: latestRun?.status === 'completed' ? 'completed' : step.status,
+          }))
+        : [];
+  const displayStartedAt = latestRun?.startedAt ?? experiment?.startedAt;
+  const displayCompletedAt = latestRun?.completedAt ?? experiment?.completedAt;
+  const displayDuration = latestRun?.result?.duration ?? experiment?.duration;
 
   const canRun =
     experiment &&
@@ -897,11 +929,11 @@ const ExperimentDetailPage: React.FC = () => {
   // Derived State
   // ---------------------------------------------------------------------------
 
-  const isCompleted = experiment.status === 'completed';
-  const isFailed = experiment.status === 'failed';
+  const isCompleted = displayStatus === 'completed';
+  const isFailed = displayStatus === 'failed';
   const hasOutcome = isCompleted || isFailed;
-  const hasResult = experiment.result != null;
-  const siemValidation = experiment.result?.siemValidation;
+  const hasResult = displayResult != null;
+  const siemValidation = displayResult?.siemValidation;
   const hasSIEMValidation = hasOutcome && siemValidation !== undefined;
 
   // ---------------------------------------------------------------------------
@@ -937,11 +969,12 @@ const ExperimentDetailPage: React.FC = () => {
           overflow: 'hidden',
           mb: 3,
           borderLeft: '4px solid',
-          borderLeftColor: isFailed
-            ? 'error.main'
-            : isCompleted
-              ? 'success.main'
-              : 'divider',
+          borderLeftColor:
+            displayStatus === 'failed'
+              ? 'error.main'
+              : displayStatus === 'completed'
+                ? 'success.main'
+                : 'divider',
         }}
       >
         <Box sx={{ p: 2.5 }}>
@@ -968,10 +1001,14 @@ const ExperimentDetailPage: React.FC = () => {
                   {experiment.name}
                 </Typography>
                 <StatusBadge
-                  status={experiment.status}
+                  status={displayStatus ?? experiment.status}
                   variant="pill"
                   size="medium"
-                  label={experiment.status === 'pending' ? 'Draft' : undefined}
+                  label={
+                    (displayStatus ?? experiment.status) === 'pending'
+                      ? 'Draft'
+                      : undefined
+                  }
                 />
               </Stack>
 
@@ -1015,19 +1052,27 @@ const ExperimentDetailPage: React.FC = () => {
                     Created: {formatDate(experiment.createdAt)}
                   </Typography>
                 </Stack>
-                {experiment.startedAt && (
+                {displayStartedAt && (
                   <Stack direction="row" spacing={0.5} alignItems="center">
                     <TimerIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                     <Typography variant="caption" color="text.secondary">
-                      Started: {formatDate(experiment.startedAt)}
+                      Started: {formatDate(displayStartedAt)}
                     </Typography>
                   </Stack>
                 )}
-                {experiment.duration !== undefined && (
+                {displayCompletedAt && (
                   <Stack direction="row" spacing={0.5} alignItems="center">
                     <TimerIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                     <Typography variant="caption" color="text.secondary">
-                      Duration: {formatDuration(experiment.duration)}
+                      Completed: {formatDate(displayCompletedAt)}
+                    </Typography>
+                  </Stack>
+                )}
+                {displayDuration !== undefined && (
+                  <Stack direction="row" spacing={0.5} alignItems="center">
+                    <TimerIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                    <Typography variant="caption" color="text.secondary">
+                      Duration: {formatDuration(displayDuration)}
                     </Typography>
                   </Stack>
                 )}
@@ -1083,9 +1128,9 @@ const ExperimentDetailPage: React.FC = () => {
       {/* Outcome — results shown inline when available                     */}
       {/* ----------------------------------------------------------------- */}
 
-      {hasOutcome && hasResult && experiment.result ? (
+      {hasOutcome && hasResult && displayResult ? (
         <Box sx={{ mb: 3 }}>
-          <ResultsSummary result={experiment.result} />
+          <ResultsSummary result={displayResult} />
         </Box>
       ) : hasOutcome && !hasResult ? (
         <Paper
@@ -1094,10 +1139,10 @@ const ExperimentDetailPage: React.FC = () => {
         >
           <ErrorIcon sx={{ fontSize: 40, color: 'warning.main', mb: 1 }} />
           <Typography variant="subtitle1" fontWeight={600} gutterBottom>
-            {isFailed ? 'Experiment Failed' : 'No Results'}
+            {displayStatus === 'failed' ? 'Experiment Failed' : 'No Results'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {isFailed
+            {displayStatus === 'failed'
               ? 'This experiment ran but did not produce a result. Check the logs below for details.'
               : 'Results will appear here once the experiment completes.'}
           </Typography>
@@ -1197,9 +1242,9 @@ const ExperimentDetailPage: React.FC = () => {
       )}
 
       {/* SIEM Validation — shown inline when data exists */}
-      {hasSIEMValidation && siemValidation && (
+      {hasSIEMValidation && displayResult?.siemValidation && (
         <Box sx={{ mb: 3 }}>
-          <SIEMValidationSection validation={siemValidation} />
+          <SIEMValidationSection validation={displayResult.siemValidation} />
         </Box>
       )}
 
@@ -1208,7 +1253,7 @@ const ExperimentDetailPage: React.FC = () => {
       {/* ----------------------------------------------------------------- */}
 
       <Box sx={{ mb: 3 }}>
-        <ProgressTracker steps={experiment.steps} />
+        <ProgressTracker steps={displaySteps} />
       </Box>
 
       {/* ----------------------------------------------------------------- */}

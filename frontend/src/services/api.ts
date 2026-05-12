@@ -223,6 +223,7 @@ const normalizeExperimentStatus = (status?: string): Experiment['status'] => {
 const normalizeExperimentResult = (
   value: unknown,
   timing?: { startedAt?: string; completedAt?: string; duration?: number | null },
+  fallbackExpectedAlertCount = 0,
 ): ExperimentResult | undefined => {
   if (!value || typeof value !== 'object') return undefined;
 
@@ -239,12 +240,16 @@ const normalizeExperimentResult = (
   }
 
   const summary = raw;
-  const expectedAlertCount =
+  const summaryExpectedAlertCount =
     typeof summary.siem_alerts_expected === 'number'
       ? summary.siem_alerts_expected
       : typeof summary.expectedAlertCount === 'number'
         ? summary.expectedAlertCount
         : 0;
+  const expectedAlertCount =
+    summaryExpectedAlertCount > 0
+      ? summaryExpectedAlertCount
+      : fallbackExpectedAlertCount;
   const receivedAlertCount =
     typeof summary.siem_alerts_received === 'number'
       ? summary.siem_alerts_received
@@ -380,27 +385,6 @@ const normalizeExperiment = (
                       : null,
         }
       : undefined;
-  const normalizedResult =
-    normalizeExperimentResult(raw.result) ??
-    normalizeExperimentResult(
-      raw.latest_run_result_summary ??
-        raw.latestRunResultSummary ??
-        latestCompletedRun?.result_summary ??
-        latestCompletedRun?.resultSummary,
-      latestRunTiming,
-    );
-  const normalizedStatus = normalizeExperimentStatus(String(raw.status ?? 'pending'));
-  // The effective status should reflect the experiment's actual lifecycle state.
-  // Only override to 'completed' if the experiment is currently running/queued/pending
-  // (meaning the run finished but the DB status hasn't caught up yet).
-  // Never override draft, active, or terminal statuses — they are authoritative.
-  const effectiveStatus =
-    normalizedResult &&
-    (normalizedStatus === 'running' ||
-      normalizedStatus === 'queued' ||
-      normalizedStatus === 'pending')
-      ? 'completed'
-      : normalizedStatus;
 
   const firstTemplate = experimentTemplates[0] ?? null;
   const firstTemplateConfig =
@@ -418,6 +402,39 @@ const normalizeExperiment = (
   const firstTargetNamespaces = Array.isArray(firstTemplate?.target_namespaces)
     ? (firstTemplate?.target_namespaces as string[])
     : [];
+  const firstTemplateSiemValidation =
+    firstTemplate && typeof firstTemplate.siem_validation === 'object'
+      ? (firstTemplate.siem_validation as Record<string, unknown>)
+      : {};
+  const templateExpectedAlertCount =
+    typeof firstTemplateSiemValidation.expected_alert_count === 'number'
+      ? firstTemplateSiemValidation.expected_alert_count
+      : typeof firstTemplateSiemValidation.expectedAlertCount === 'number'
+        ? firstTemplateSiemValidation.expectedAlertCount
+        : 0;
+
+  const normalizedResult =
+    normalizeExperimentResult(raw.result, undefined, templateExpectedAlertCount) ??
+    normalizeExperimentResult(
+      raw.latest_run_result_summary ??
+        raw.latestRunResultSummary ??
+        latestCompletedRun?.result_summary ??
+        latestCompletedRun?.resultSummary,
+      latestRunTiming,
+      templateExpectedAlertCount,
+    );
+  const normalizedStatus = normalizeExperimentStatus(String(raw.status ?? 'pending'));
+  // The effective status should reflect the experiment's actual lifecycle state.
+  // Only override to 'completed' if the experiment is currently running/queued/pending
+  // (meaning the run finished but the DB status hasn't caught up yet).
+  // Never override draft, active, or terminal statuses — they are authoritative.
+  const effectiveStatus =
+    normalizedResult &&
+    (normalizedStatus === 'running' ||
+      normalizedStatus === 'queued' ||
+      normalizedStatus === 'pending')
+      ? 'completed'
+      : normalizedStatus;
 
   const parameters =
     raw.parameters && typeof raw.parameters === 'object'
@@ -555,12 +572,13 @@ const normalizeExperiment = (
           ? Number(raw.duration) || undefined
           : (latestRunTiming?.duration ?? undefined),
     result: normalizedResult,
-    runs: normalizeRuns(rawRuns),
+    runs: normalizeRuns(rawRuns, templateExpectedAlertCount),
   };
 };
 
 const normalizeRuns = (
   rawRuns: Array<Record<string, unknown>>,
+  fallbackExpectedAlertCount = 0,
 ): ExperimentRun[] | undefined => {
   if (!rawRuns || rawRuns.length === 0) return undefined;
 
@@ -614,6 +632,8 @@ const normalizeRuns = (
       steps: [],
       result: normalizeExperimentResult(
         run.result_summary ?? run.ResultSummary ?? run.result,
+        undefined,
+        fallbackExpectedAlertCount,
       ),
     };
   });
